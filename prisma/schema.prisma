@@ -1,0 +1,409 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  AuditTeam
+  Viewer
+  Auditee
+  Pending
+}
+
+enum AuditType {
+  IT
+  RegulatoryIT
+  Operations
+  RegulatoryOperations
+  External
+}
+
+enum AuditOpinionRating {
+  Satisfactory
+  NeedsImprovement
+  Unsatisfactory
+}
+
+enum Priority {
+  High
+  Moderate
+  Low
+}
+
+enum ControlRating {
+  Effective
+  PartiallyEffective
+  NotEffective
+}
+
+enum ActionPlanStatus {
+  NotStarted
+  InProgress
+  PendingValidation
+  Closed
+  RiskAccepted
+  Dropped
+}
+
+enum CreatedVia {
+  Manual
+  AIIngestion
+  Migration
+  Standalone
+}
+
+enum AuditLogAction {
+  Create
+  Update
+  Delete
+  StatusChange
+  Login
+  LoginFailed
+  Logout
+  EvidenceUpload
+  EvidenceReplace
+  AIExtract
+  PasswordChange
+  PasswordReset
+  AccountLocked
+}
+
+enum ExtractionStatus {
+  Pending
+  Approved
+  Rejected
+}
+
+model users {
+  id                            String                         @id @default(uuid()) @db.Uuid
+  employee_id                   String?                        @unique
+  email                         String                         @unique
+  password_hash                 String
+  password_must_change          Boolean                        @default(true)
+  failed_login_attempts         Int                            @default(0)
+  locked_until                  DateTime?
+  last_login_at                 DateTime?
+  name                          String
+  role                          UserRole
+  is_admin                      Boolean                        @default(false)
+  is_internal_auditor           Boolean                        @default(false)
+  is_active                     Boolean                        @default(true)
+  job_title                     String?
+  department                    String?
+  team_l1                       String?
+  team_l2                       String?
+  team_l3                       String?
+  company                       String?
+  location                      String?
+  manager_name                  String?
+  manager_email                 String?
+  employment_status             String?
+  last_working_date             DateTime?
+  end_date                      DateTime?
+  created_at                    DateTime                       @default(now())
+  updated_at                    DateTime                       @updatedAt
+  audits_created                audits[]                       @relation("audits_created_by")
+  findings_created              findings[]                     @relation("findings_created_by")
+  action_plans_created          action_plans[]                 @relation("action_plans_created_by")
+  action_plan_owner_assignments action_plan_owners[]           @relation("action_plan_owners_user")
+  action_plan_owner_assignments_made action_plan_owners[]      @relation("action_plan_owners_assigned_by")
+  follow_up_auditor_assignments action_plan_follow_up_auditors[] @relation("follow_up_auditors_user")
+  line_manager_assignments      action_plan_line_managers[]    @relation("line_managers_user")
+  evidence_uploaded             evidence[]                     @relation("evidence_uploaded_by")
+  comments                      comments[]                     @relation("comments_user")
+  status_changes                status_history[]               @relation("status_history_changed_by")
+  target_date_revisions         target_date_revisions[]        @relation("target_date_revisions_revised_by")
+  audit_logs                    audit_log[]                    @relation("audit_log_user")
+  ai_extractions_created        ai_extractions[]               @relation("ai_extractions_created_by")
+  ai_extractions_approved       ai_extractions[]               @relation("ai_extractions_approved_by")
+  ai_insights_snapshots_generated ai_insights_snapshot[]        @relation("ai_insights_snapshot_generated_by")
+  user_import_notifications     user_import_notifications[]    @relation("user_import_notifications_user")
+
+  @@index([role])
+  @@index([is_active])
+}
+
+model entities {
+  id                   String                 @id @default(uuid()) @db.Uuid
+  code                 String                 @unique
+  entity_id            String?
+  full_name            String
+  country              String?
+  group_category       String?
+  is_active            Boolean                @default(true)
+  display_order        Int                    @default(0)
+  created_at           DateTime               @default(now())
+  audit_entities       audit_entities[]
+  action_plan_entities action_plan_entities[]
+}
+
+model audits {
+  id                String               @id @default(uuid()) @db.Uuid
+  name              String
+  reference_number  String?
+  audit_type        AuditType
+  opinion_rating    AuditOpinionRating?
+  report_issue_date DateTime?
+  executive_summary String?              @db.Text
+  report_pdf_path   String?
+  report_pdf_filename String?
+  is_deleted        Boolean              @default(false)
+  created_by_id     String               @db.Uuid
+  created_at        DateTime             @default(now())
+  updated_at        DateTime             @updatedAt
+  created_by        users                @relation("audits_created_by", fields: [created_by_id], references: [id])
+  audit_entities    audit_entities[]
+  findings          findings[]
+  control_areas     control_areas[]
+}
+
+model audit_entities {
+  audit_id  String   @db.Uuid
+  entity_id String   @db.Uuid
+  audit     audits   @relation(fields: [audit_id], references: [id], onDelete: Cascade)
+  entity    entities @relation(fields: [entity_id], references: [id], onDelete: Cascade)
+
+  @@id([audit_id, entity_id])
+}
+
+model findings {
+  id               String         @id @default(uuid()) @db.Uuid
+  audit_id         String?        @db.Uuid
+  is_standalone    Boolean        @default(false)
+  external_ref     String?
+  title            String
+  description      String?        @db.Text
+  root_cause       String?        @db.Text
+  potential_impact String?        @db.Text
+  recommendation   String?        @db.Text
+  priority         Priority?
+  control_rating   ControlRating?
+  display_order    Int            @default(1)
+  is_deleted       Boolean        @default(false)
+  created_by_id    String         @db.Uuid
+  created_via      CreatedVia
+  created_at       DateTime       @default(now())
+  updated_at       DateTime       @updatedAt
+  audit            audits?        @relation(fields: [audit_id], references: [id], onDelete: SetNull)
+  created_by       users          @relation("findings_created_by", fields: [created_by_id], references: [id])
+  action_plans     action_plans[]
+
+  @@index([audit_id])
+}
+
+model control_areas {
+  id             String         @id @default(uuid()) @db.Uuid
+  audit_id       String         @db.Uuid
+  title          String
+  control_rating ControlRating?
+  finding_ref    String?
+  display_order  Int            @default(0)
+  created_at     DateTime       @default(now())
+  audit          audits         @relation(fields: [audit_id], references: [id], onDelete: Cascade)
+}
+
+model action_plans {
+  id                              String                            @id @default(uuid()) @db.Uuid
+  display_id                      String                            @unique
+  finding_id                      String                            @db.Uuid
+  description                     String                            @db.Text
+  priority                        Priority?
+  status                          ActionPlanStatus                  @default(NotStarted)
+  original_target_date            DateTime?
+  current_target_date             DateTime?
+  required_evidence               String?
+  department                      String?
+  was_implemented_at_issuance     Boolean                           @default(false)
+  reschedule_count                Int                               @default(0)
+  closure_remarks                 String?                           @db.Text
+  closed_at                       DateTime?
+  is_deleted                      Boolean                           @default(false)
+  created_via                     CreatedVia
+  created_by_id                   String                            @db.Uuid
+  created_at                      DateTime                          @default(now())
+  updated_at                      DateTime                          @updatedAt
+  finding                         findings                          @relation(fields: [finding_id], references: [id])
+  created_by                      users                             @relation("action_plans_created_by", fields: [created_by_id], references: [id])
+  action_plan_entities            action_plan_entities[]
+  action_plan_owners              action_plan_owners[]
+  action_plan_follow_up_auditors  action_plan_follow_up_auditors[]
+  action_plan_line_managers       action_plan_line_managers[]
+  evidence                        evidence[]
+  comments                        comments[]
+  status_history                  status_history[]
+  target_date_revisions           target_date_revisions[]
+
+  @@index([status])
+  @@index([is_deleted])
+}
+
+model action_plan_entities {
+  action_plan_id String       @db.Uuid
+  entity_id      String       @db.Uuid
+  action_plan    action_plans @relation(fields: [action_plan_id], references: [id], onDelete: Cascade)
+  entity         entities     @relation(fields: [entity_id], references: [id], onDelete: Cascade)
+
+  @@id([action_plan_id, entity_id])
+}
+
+model action_plan_owners {
+  id             String       @id @default(uuid()) @db.Uuid
+  action_plan_id String       @db.Uuid
+  user_id        String       @db.Uuid
+  is_primary     Boolean      @default(false)
+  assigned_by_id String       @db.Uuid
+  assigned_at    DateTime     @default(now())
+  action_plan    action_plans @relation(fields: [action_plan_id], references: [id], onDelete: Cascade)
+  user           users        @relation("action_plan_owners_user", fields: [user_id], references: [id])
+  assigned_by    users        @relation("action_plan_owners_assigned_by", fields: [assigned_by_id], references: [id])
+}
+
+model action_plan_follow_up_auditors {
+  id             String       @id @default(uuid()) @db.Uuid
+  action_plan_id String       @db.Uuid
+  user_id        String       @db.Uuid
+  assigned_at    DateTime     @default(now())
+  action_plan    action_plans @relation(fields: [action_plan_id], references: [id], onDelete: Cascade)
+  user           users        @relation("follow_up_auditors_user", fields: [user_id], references: [id])
+}
+
+model action_plan_line_managers {
+  id             String       @id @default(uuid()) @db.Uuid
+  action_plan_id String       @db.Uuid
+  user_id        String       @db.Uuid
+  assigned_at    DateTime     @default(now())
+  action_plan    action_plans @relation(fields: [action_plan_id], references: [id], onDelete: Cascade)
+  user           users        @relation("line_managers_user", fields: [user_id], references: [id])
+}
+
+model evidence {
+  id             String       @id @default(uuid()) @db.Uuid
+  action_plan_id String       @db.Uuid
+  filename       String
+  original_name  String
+  file_path      String
+  file_size      Int
+  mime_type      String
+  description    String?
+  uploaded_by_id String       @db.Uuid
+  is_deleted     Boolean      @default(false)
+  created_at     DateTime     @default(now())
+  action_plan    action_plans @relation(fields: [action_plan_id], references: [id], onDelete: Cascade)
+  uploaded_by    users        @relation("evidence_uploaded_by", fields: [uploaded_by_id], references: [id])
+}
+
+model comments {
+  id             String       @id @default(uuid()) @db.Uuid
+  action_plan_id String       @db.Uuid
+  user_id        String       @db.Uuid
+  comment        String       @db.Text
+  is_deleted     Boolean      @default(false)
+  created_at     DateTime     @default(now())
+  updated_at     DateTime     @updatedAt
+  action_plan    action_plans @relation(fields: [action_plan_id], references: [id], onDelete: Cascade)
+  user           users        @relation("comments_user", fields: [user_id], references: [id])
+}
+
+model status_history {
+  id             String            @id @default(uuid()) @db.Uuid
+  action_plan_id String            @db.Uuid
+  from_status    ActionPlanStatus?
+  to_status      ActionPlanStatus
+  remarks        String?
+  changed_by_id  String            @db.Uuid
+  changed_at     DateTime          @default(now())
+  action_plan    action_plans      @relation(fields: [action_plan_id], references: [id], onDelete: Cascade)
+  changed_by     users             @relation("status_history_changed_by", fields: [changed_by_id], references: [id])
+}
+
+model target_date_revisions {
+  id             String       @id @default(uuid()) @db.Uuid
+  action_plan_id String       @db.Uuid
+  old_date       DateTime?
+  new_date       DateTime?
+  justification  String
+  revised_by_id  String       @db.Uuid
+  revised_at     DateTime     @default(now())
+  action_plan    action_plans @relation(fields: [action_plan_id], references: [id], onDelete: Cascade)
+  revised_by     users        @relation("target_date_revisions_revised_by", fields: [revised_by_id], references: [id])
+}
+
+model audit_log {
+  id          String         @id @default(uuid()) @db.Uuid
+  user_id     String?        @db.Uuid
+  action      AuditLogAction
+  entity_type String
+  entity_id   String?
+  before_json Json?
+  after_json  Json?
+  ip_address  String?
+  user_agent  String?
+  created_at  DateTime       @default(now())
+  user        users?         @relation("audit_log_user", fields: [user_id], references: [id], onDelete: SetNull)
+
+  @@index([entity_type])
+  @@index([entity_id])
+  @@index([created_at(sort: Desc)])
+  @@index([user_id, created_at(sort: Desc)])
+  @@index([entity_type, created_at(sort: Desc)])
+  @@index([action, created_at(sort: Desc)])
+}
+
+model ai_extractions {
+  id               String           @id @default(uuid()) @db.Uuid
+  filename         String
+  file_path        String
+  status           ExtractionStatus @default(Pending)
+  model_used       String
+  prompt_version   String
+  extracted_json   Json
+  human_edits_json Json?
+  rejection_reason String?
+  created_audit_id String?          @db.Uuid
+  created_by_id    String           @db.Uuid
+  approved_by_id   String?          @db.Uuid
+  created_at       DateTime         @default(now())
+  updated_at       DateTime         @updatedAt
+  created_by       users            @relation("ai_extractions_created_by", fields: [created_by_id], references: [id])
+  approved_by      users?           @relation("ai_extractions_approved_by", fields: [approved_by_id], references: [id], onDelete: SetNull)
+}
+
+model system_config {
+  id         String   @id @default(uuid()) @db.Uuid
+  key        String   @unique
+  value      Json
+  updated_by String?
+  updated_at DateTime @updatedAt
+}
+
+model ai_insights_snapshot {
+  id             String   @id @default(uuid()) @db.Uuid
+  generated_at   DateTime @default(now())
+  generated_by   String?  @db.Uuid
+  trigger        String
+  payload        Json
+  model_used     String
+  prompt_version String
+  duration_ms    Int
+  generated_user users?   @relation("ai_insights_snapshot_generated_by", fields: [generated_by], references: [id], onDelete: SetNull)
+
+  @@index([generated_at(sort: Desc)])
+  @@index([trigger])
+}
+
+model user_import_notifications {
+  id          String   @id @default(uuid()) @db.Uuid
+  user_id     String   @db.Uuid
+  user_name   String
+  user_email  String
+  change_type String
+  old_value   Json?
+  new_value   Json?
+  is_read     Boolean  @default(false)
+  batch_id    String
+  created_at  DateTime @default(now())
+  user        users    @relation("user_import_notifications_user", fields: [user_id], references: [id], onDelete: Cascade)
+}

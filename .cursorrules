@@ -1,0 +1,11 @@
+- Prisma model name is always lowercase plural: model users, model audits, model findings etc.
+- Prisma client always uses lowercase plural: prisma.users, prisma.audits, prisma.findings etc.
+- Never use prisma.user (singular) — it does not exist
+- writeAuditLog is always called OUTSIDE prisma.$transaction blocks, never inside
+- Never use window.confirm, window.alert, window.prompt — always use custom dialogue components
+- All status transitions are unrestricted — any status can move to any other status
+- No temporary passwords — users always set their own password on first login
+- Follow-up auditor dropdowns only show users where is_internal_auditor is true
+- Storage is abstracted — never call GCS or filesystem directly, always use src/lib/storage/index.ts
+- Every fetch call reads the response body before throwing errors
+- All enum values: Priority (High|Moderate|Low), ControlRating (Effective|PartiallyEffective|NotEffective), ActionPlanStatus (NotStarted|InProgress|PendingValidation|Closed|RiskAccepted|Dropped), AuditType (IT|RegulatoryIT|Operations|RegulatoryOperations|External), UserRole (AuditTeam|Viewer|Auditee|Pending)
