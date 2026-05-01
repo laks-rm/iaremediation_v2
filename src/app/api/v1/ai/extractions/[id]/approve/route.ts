@@ -111,14 +111,18 @@ async function resolveOwnerId(actionPlan: ExtractedActionPlan) {
 }
 
 function actionPlansForFinding(data: ExtractedAuditData, finding: ExtractedFinding) {
-  const externalRef = nullableString(finding.external_ref);
   const nested = finding.action_plans ?? [];
+  if (nested.length > 0) {
+    return nested;
+  }
+
+  const externalRef = nullableString(finding.external_ref);
   const topLevel = (data.action_plans ?? []).filter((actionPlan) => {
     const findingReference = nullableString(actionPlan.finding_reference);
     return externalRef && findingReference && normalize(externalRef) === normalize(findingReference);
   });
 
-  return [...nested, ...topLevel];
+  return topLevel;
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {

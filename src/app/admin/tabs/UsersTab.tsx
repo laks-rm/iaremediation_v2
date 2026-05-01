@@ -2,6 +2,7 @@
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 
+import ConfirmDialog from "../../../components/ConfirmDialog";
 import EmptyState from "../../../components/EmptyState";
 import { useToast } from "../../../components/Toast";
 import {
@@ -52,6 +53,8 @@ export default function UsersTab() {
   const [banner, setBanner] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [resetUser, setResetUser] = useState<AdminUser | null>(null);
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
 
   useEffect(() => { loadUsers(); }, []);
 
@@ -142,6 +145,28 @@ export default function UsersTab() {
     await loadUsers();
   }
 
+  async function resetPassword() {
+    if (!resetUser || isResettingPassword) {
+      return;
+    }
+
+    setIsResettingPassword(true);
+    const response = await fetch(`/api/v1/admin/users/${resetUser.id}/reset-password`, {
+      method: "POST",
+    });
+    const body = await readResponseBody(response);
+    setIsResettingPassword(false);
+
+    if (!response.ok) {
+      toast.error(responseError(body, "Unable to reset password."));
+      return;
+    }
+
+    toast.success(`Password reset link sent to ${resetUser.email}`);
+    setResetUser(null);
+    await loadUsers();
+  }
+
   function showHover(user: AdminUser, target: HTMLElement) {
     window.setTimeout(() => {
       const rect = target.getBoundingClientRect();
@@ -225,7 +250,44 @@ export default function UsersTab() {
         ) : null}
       </div>
       {hoverUser ? <UserHoverCard user={hoverUser.user} x={hoverUser.x} y={hoverUser.y} /> : null}
-      {editingUser ? <UserEditor errors={fieldErrors} user={editingUser} setUser={(nextUser) => { setEditingUser(nextUser); setFieldErrors((current) => ({ ...current, name: nextUser.name?.trim() ? "" : current.name, email: nextUser.email?.trim() ? "" : current.email })); }} onClose={() => setEditingUser(null)} onSave={saveUser} /> : null}
+      {editingUser ? (
+        <UserEditor
+          errors={fieldErrors}
+          user={editingUser}
+          setUser={(nextUser) => {
+            setEditingUser(nextUser);
+            setFieldErrors((current) => ({
+              ...current,
+              name: nextUser.name?.trim() ? "" : current.name,
+              email: nextUser.email?.trim() ? "" : current.email,
+            }));
+          }}
+          onClose={() => setEditingUser(null)}
+          onResetPassword={() => {
+            if (editingUser.id) {
+              setResetUser(editingUser as AdminUser);
+            }
+          }}
+          onSave={saveUser}
+        />
+      ) : null}
+      <ConfirmDialog
+        cancelLabel="Cancel"
+        confirmLabel="Confirm"
+        isOpen={Boolean(resetUser)}
+        message={
+          resetUser
+            ? `This will send ${resetUser.name} a password reset link and invalidate their current password. Continue?`
+            : ""
+        }
+        onCancel={() => {
+          if (!isResettingPassword) {
+            setResetUser(null);
+          }
+        }}
+        onConfirm={resetPassword}
+        title="Reset password"
+      />
     </section>
   );
 }
@@ -240,7 +302,21 @@ function UserHoverCard({ user, x, y }: { user: AdminUser; x: number; y: number }
   </div>;
 }
 
-function UserEditor({ user, setUser, onClose, onSave, errors }: { user: Partial<AdminUser>; setUser: (user: Partial<AdminUser>) => void; onClose: () => void; onSave: () => void; errors: Record<string, string> }) {
+function UserEditor({
+  user,
+  setUser,
+  onClose,
+  onSave,
+  onResetPassword,
+  errors,
+}: {
+  user: Partial<AdminUser>;
+  setUser: (user: Partial<AdminUser>) => void;
+  onClose: () => void;
+  onSave: () => void;
+  onResetPassword: () => void;
+  errors: Record<string, string>;
+}) {
   return (
     <SlideOver title={user.id ? "Edit User" : "Add User"} onClose={onClose}>
       <div className="admin-form">
@@ -260,6 +336,11 @@ function UserEditor({ user, setUser, onClose, onSave, errors }: { user: Partial<
         {["department", "job_title", "team_l1", "team_l2", "team_l3", "company", "location", "manager_name", "manager_email"].map((field) => (
           <input key={field} placeholder={field} value={String(user[field as keyof AdminUser] ?? "")} onChange={(e) => setUser({ ...user, [field]: e.target.value })} />
         ))}
+        {user.id ? (
+          <button className="button" onClick={onResetPassword} type="button">
+            Reset password
+          </button>
+        ) : null}
         <button className="button button--primary" onClick={onSave} type="button">Save</button>
       </div>
     </SlideOver>

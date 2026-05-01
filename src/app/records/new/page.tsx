@@ -2,10 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { useSearchParams } from "next/navigation";
-import { ChangeEvent, DragEvent, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, Suspense, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 import AppLayout from "../../../components/AppLayout";
+import EntityMultiSelect from "../../../components/EntityMultiSelect";
 import { AUDIT_TYPE_LABELS } from "../../../lib/constants";
 
 type Mode = "newAudit" | "existingAudit" | "standalone";
@@ -75,7 +76,6 @@ type ActionPlanDraft = {
   original_target_date: string;
   current_target_date: string;
   required_evidence: string;
-  department: string;
   entity_ids: string[];
   owner_user_id: string;
   follow_up_auditor_user_id: string;
@@ -170,7 +170,6 @@ function newActionPlanDraft(entityIds: string[] = []): ActionPlanDraft {
     original_target_date: "",
     current_target_date: "",
     required_evidence: "",
-    department: "",
     entity_ids: [...entityIds],
     owner_user_id: "",
     follow_up_auditor_user_id: "",
@@ -280,150 +279,6 @@ function Field({
       {children}
       {hint ? <em>{hint}</em> : null}
     </label>
-  );
-}
-
-function EntityMultiSelect({
-  entities,
-  selectedIds,
-  onChange,
-}: {
-  entities: EntityOption[];
-  selectedIds: string[];
-  onChange: (ids: string[]) => void;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const containerRef = useRef<HTMLDivElement>(null);
-  const selectedEntities = entities.filter((entity) => selectedIds.includes(entity.id));
-  const filteredEntities = entities.filter((entity) =>
-    [entity.code, entity.full_name].join(" ").toLowerCase().includes(query.trim().toLowerCase()),
-  );
-
-  useEffect(() => {
-    function closeOnOutsideClick(event: MouseEvent) {
-      if (!containerRef.current?.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
-    }
-
-    document.addEventListener("mousedown", closeOnOutsideClick);
-    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
-  }, []);
-
-  function toggleEntity(entityId: string, checked: boolean) {
-    if (checked) {
-      onChange(selectedIds.includes(entityId) ? selectedIds : [...selectedIds, entityId]);
-      return;
-    }
-
-    onChange(selectedIds.filter((id) => id !== entityId));
-  }
-
-  return (
-    <div ref={containerRef} style={{ position: "relative", width: "100%" }}>
-      <button
-        onClick={() => setIsOpen((current) => !current)}
-        style={{
-          background: "white",
-          border: `1px solid ${isOpen ? "#FF444F" : "#E8E6E0"}`,
-          borderRadius: 6,
-          boxShadow: isOpen ? "0 0 0 2px rgba(255,68,79,0.12)" : "none",
-          cursor: "pointer",
-          minHeight: 40,
-          padding: "8px 12px",
-          textAlign: "left",
-          width: "100%",
-        }}
-        type="button"
-      >
-        {selectedEntities.length > 0 ? (
-          selectedEntities.map((entity) => (
-            <span
-              key={entity.id}
-              style={{
-                background: "#0E0E0C",
-                borderRadius: 3,
-                color: "white",
-                display: "inline-block",
-                fontSize: 11,
-                marginRight: 4,
-                padding: "1px 6px",
-              }}
-            >
-              {entity.code}
-            </span>
-          ))
-        ) : (
-          <span style={{ color: "#8a867c" }}>Select entities…</span>
-        )}
-      </button>
-      {isOpen ? (
-        <div
-          style={{
-            background: "white",
-            border: "1px solid #E8E6E0",
-            borderRadius: 6,
-            boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
-            marginTop: 4,
-            maxHeight: 280,
-            overflowY: "auto",
-            position: "absolute",
-            width: "100%",
-            zIndex: 50,
-          }}
-        >
-          <div style={{ padding: 8 }}>
-            <input
-              autoFocus
-              placeholder="Search entities..."
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-          </div>
-          {filteredEntities.map((entity) => (
-            <label
-              key={entity.id}
-              style={{
-                alignItems: "flex-start",
-                cursor: "pointer",
-                display: "flex",
-                gap: 8,
-                padding: "6px 10px",
-              }}
-            >
-              <input
-                checked={selectedIds.includes(entity.id)}
-                onChange={(event) => toggleEntity(entity.id, event.target.checked)}
-                type="checkbox"
-              />
-              <span style={{ display: "grid", gap: 2 }}>
-                <strong>{entity.code}</strong>
-                <em style={{ color: "#6B6860", fontSize: 12 }}>{entity.full_name}</em>
-              </span>
-            </label>
-          ))}
-          <div
-            style={{
-              alignItems: "center",
-              borderTop: "1px solid #E8E6E0",
-              display: "flex",
-              justifyContent: "space-between",
-              padding: "6px 10px",
-            }}
-          >
-            <span style={{ color: "#6B6860", fontSize: 12 }}>{selectedIds.length} selected</span>
-            <button
-              onClick={() => onChange([])}
-              style={{ background: "transparent", border: 0, color: "#FF444F", cursor: "pointer", fontSize: 12 }}
-              type="button"
-            >
-              Clear all
-            </button>
-          </div>
-        </div>
-      ) : null}
-    </div>
   );
 }
 
@@ -1646,12 +1501,6 @@ function ActionPlanCard({
                 current_target_date: event.target.value,
               })
             }
-          />
-        </Field>
-        <Field label="Department">
-          <input
-            value={actionPlan.department}
-            onChange={(event) => onUpdate({ department: event.target.value })}
           />
         </Field>
         <Field label="Owner">

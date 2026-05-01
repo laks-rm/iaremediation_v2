@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 import AppLayout from "../../../../components/AppLayout";
+import EntityMultiSelect from "../../../../components/EntityMultiSelect";
 
 type Status = "Pending" | "Approved" | "Rejected";
 type AuditType = "IT" | "RegulatoryIT" | "Operations" | "RegulatoryOperations" | "External";
@@ -24,7 +25,19 @@ type UserOption = {
   name: string;
   email: string;
   department: string | null;
+  job_title: string | null;
+  team_l2: string | null;
   is_internal_auditor: boolean;
+};
+
+type OwnerHintUser = {
+  id: string;
+  name: string;
+};
+
+type OwnerSuggestionState = {
+  ownerAiSuggested: boolean;
+  ownerHintUser: OwnerHintUser | null;
 };
 
 type ExtractedActionPlan = {
@@ -34,6 +47,9 @@ type ExtractedActionPlan = {
   priority?: Priority | null;
   target_date?: string | null;
   entity_ids?: string[];
+  entities?: string[];
+  entity_refs?: string[];
+  entity_codes?: string[];
   owner_names?: string[];
   owner_user_id?: string | null;
   follow_up_auditor_user_id?: string | null;
@@ -67,6 +83,9 @@ type ExtractedAuditData = {
   opinion_rating?: OpinionRating | null;
   report_issue_date?: string | null;
   entity_ids?: string[];
+  entities?: string[];
+  entity_refs?: string[];
+  entity_codes?: string[];
   entities_mentioned?: string[];
   executive_summary?: string | null;
   control_areas?: ExtractedControlArea[];
@@ -147,6 +166,192 @@ function mergeData(base: ExtractedAuditData, edits: ExtractedAuditData | null) {
   };
 }
 
+function normalizeEntityReference(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function cleanEntityReferences(values: string[] | undefined) {
+  return [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))];
+}
+
+function firstEntityReferences(...candidates: Array<string[] | undefined>) {
+  return candidates.map(cleanEntityReferences).find((references) => references.length > 0) ?? [];
+}
+
+function referencesAreEntityIds(references: string[] | undefined, entities: EntityOption[]) {
+  const cleaned = cleanEntityReferences(references);
+  if (cleaned.length === 0) return false;
+
+  const entityIds = new Set(entities.map((entity) => entity.id));
+  return cleaned.every((reference) => entityIds.has(reference));
+}
+
+function matchEntityReferences(references: string[], entities: EntityOption[]) {
+  const selectedIds: string[] = [];
+  const unmatched: string[] = [];
+
+  for (const reference of cleanEntityReferences(references)) {
+    const normalizedReference = normalizeEntityReference(reference);
+    const matchedEntity =
+      entities.find((entity) => normalizeEntityReference(entity.code) === normalizedReference) ??
+      entities.find((entity) => normalizeEntityReference(entity.full_name) === normalizedReference);
+
+    if (matchedEntity) {
+      if (!selectedIds.includes(matchedEntity.id)) {
+        selectedIds.push(matchedEntity.id);
+      }
+    } else {
+      unmatched.push(reference);
+    }
+  }
+
+  return { selectedIds, unmatched };
+}
+
+function auditLevelEntityReferences(data: ExtractedAuditData) {
+  return firstEntityReferences(data.entity_ids, data.entities, data.entity_refs, data.entity_codes, data.entities_mentioned);
+}
+
+function actionPlanEntityReferences(actionPlan: ExtractedActionPlan) {
+  return firstEntityReferences(actionPlan.entity_ids, actionPlan.entities, actionPlan.entity_refs, actionPlan.entity_codes);
+}
+
+function hydrateEntitySelections(data: ExtractedAuditData, entities: EntityOption[]) {
+  const auditReferences = auditLevelEntityReferences(data);
+  const auditMatch = referencesAreEntityIds(data.entity_ids, entities)
+    ? { selectedIds: cleanEntityReferences(data.entity_ids), unmatched: [] }
+    : matchEntityReferences(auditReferences, entities);
+  const actionPlanUnmatchedEntities: Record<string, string[]> = {};
+
+  return {
+    data: {
+      ...data,
+      entity_ids: auditMatch.selectedIds,
+      findings: (data.findings ?? []).map((finding, findingIndex) => ({
+        ...finding,
+        action_plans: (finding.action_plans ?? []).map((actionPlan, actionPlanIndex) => {
+          const planReferences = actionPlanEntityReferences(actionPlan);
+          const planMatch = referencesAreEntityIds(actionPlan.entity_ids, entities)
+            ? { selectedIds: cleanEntityReferences(actionPlan.entity_ids), unmatched: [] }
+            : matchEntityReferences(planReferences.length > 0 ? planReferences : auditReferences, entities);
+          const unmatchedKey = `${findingIndex}:${actionPlanIndex}`;
+
+          if (planMatch.unmatched.length > 0) {
+            actionPlanUnmatchedEntities[unmatchedKey] = planMatch.unmatched;
+          }
+
+          return {
+            ...actionPlan,
+            entity_ids: planMatch.selectedIds,
+          };
+        }),
+      })),
+    },
+    auditUnmatchedEntities: auditMatch.unmatched,
+    actionPlanUnmatchedEntities,
+  };
+}
+
+function normalizeOwnerName(value: string) {
+  return value.toLowerCase().trim().replace(/\s+/g, " ");
+}
+
+function tokenOverlapScore(extractedName: string, candidate: string) {
+  const extractedTokens = normalizeOwnerName(extractedName).split(" ").filter(Boolean);
+  const candidateTokens = normalizeOwnerName(candidate).split(" ").filter(Boolean);
+  const largerTokenCount = Math.max(extractedTokens.length, candidateTokens.length);
+
+  if (largerTokenCount === 0) return 0;
+
+  const candidateTokenSet = new Set(candidateTokens);
+  const matchingTokens = extractedTokens.filter((token) => candidateTokenSet.has(token)).length;
+  return matchingTokens / largerTokenCount;
+}
+
+function scoreOwnerCandidate(extractedName: string, candidate: string) {
+  const normalizedExtracted = normalizeOwnerName(extractedName);
+  const normalizedCandidate = normalizeOwnerName(candidate);
+
+  if (!normalizedExtracted || !normalizedCandidate) return 0;
+  if (normalizedExtracted === normalizedCandidate) return 1;
+  if (normalizedCandidate.includes(normalizedExtracted) || normalizedExtracted.includes(normalizedCandidate)) return 0.9;
+
+  return tokenOverlapScore(normalizedExtracted, normalizedCandidate);
+}
+
+function fuzzyMatchUser(
+  extractedName: string,
+  users: { id: string; name: string; email: string }[],
+): { user: { id: string; name: string; email: string }; score: number } | null {
+  let bestMatch: { user: { id: string; name: string; email: string }; score: number } | null = null;
+
+  for (const user of users) {
+    const emailLocalPart = user.email.split("@")[0] ?? "";
+    const score = Math.max(
+      scoreOwnerCandidate(extractedName, user.name),
+      scoreOwnerCandidate(extractedName, emailLocalPart),
+    );
+
+    if (!bestMatch || score > bestMatch.score) {
+      bestMatch = { user, score };
+    }
+  }
+
+  return bestMatch && bestMatch.score >= 0.5 ? bestMatch : null;
+}
+
+function hydrateOwnerSuggestions(data: ExtractedAuditData, users: UserOption[]) {
+  const ownerSuggestions: Record<string, OwnerSuggestionState> = {};
+
+  return {
+    data: {
+      ...data,
+      findings: (data.findings ?? []).map((finding, findingIndex) => ({
+        ...finding,
+        action_plans: (finding.action_plans ?? []).map((actionPlan, actionPlanIndex) => {
+          const ownerName = actionPlan.owner_names?.[0]?.trim();
+          const ownerKey = `${findingIndex}:${actionPlanIndex}`;
+
+          if (!ownerName || actionPlan.owner_user_id) {
+            return actionPlan;
+          }
+
+          const match = fuzzyMatchUser(ownerName, users);
+          if (!match) {
+            return actionPlan;
+          }
+
+          if (match.score >= 0.85) {
+            ownerSuggestions[ownerKey] = {
+              ownerAiSuggested: true,
+              ownerHintUser: null,
+            };
+            return {
+              ...actionPlan,
+              owner_user_id: match.user.id,
+            };
+          }
+
+          ownerSuggestions[ownerKey] = {
+            ownerAiSuggested: false,
+            ownerHintUser: {
+              id: match.user.id,
+              name: match.user.name,
+            },
+          };
+          return actionPlan;
+        }),
+      })),
+    },
+    ownerSuggestions,
+  };
+}
+
+function userInfoText(user: UserOption | undefined) {
+  const parts = [user?.job_title, user?.department, user?.team_l2].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : "No department info available";
+}
+
 function emptyActionPlan(findingReference?: string | null): ExtractedActionPlan {
   return {
     finding_reference: findingReference ?? null,
@@ -169,6 +374,11 @@ export default function ExtractionReviewPage() {
   const [entities, setEntities] = useState<EntityOption[]>([]);
   const [users, setUsers] = useState<UserOption[]>([]);
   const [followUpAuditors, setFollowUpAuditors] = useState<UserOption[]>([]);
+  const [auditUnmatchedEntities, setAuditUnmatchedEntities] = useState<string[]>([]);
+  const [actionPlanUnmatchedEntities, setActionPlanUnmatchedEntities] = useState<Record<string, string[]>>({});
+  const [ownerSuggestions, setOwnerSuggestions] = useState<Record<string, OwnerSuggestionState>>({});
+  const [bulkFollowUpAuditorId, setBulkFollowUpAuditorId] = useState<string | null>(null);
+  const [followUpAuditorOverrides, setFollowUpAuditorOverrides] = useState<Record<string, boolean>>({});
   const [expandedFindings, setExpandedFindings] = useState<Set<number>>(new Set([0]));
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -195,8 +405,8 @@ export default function ExtractionReviewPage() {
     }
 
     const nextExtraction = (extractionBody as { extraction: ExtractionDetail }).extraction;
+    const nextHumanEdits = mergeData(nextExtraction.extracted_json, nextExtraction.human_edits_json);
     setExtraction(nextExtraction);
-    setHumanEdits(mergeData(nextExtraction.extracted_json, nextExtraction.human_edits_json));
 
     if (optionsResponse.ok) {
       const options = optionsBody as {
@@ -204,9 +414,24 @@ export default function ExtractionReviewPage() {
         users: UserOption[];
         follow_up_auditors: UserOption[];
       };
+      const entityHydrated = hydrateEntitySelections(nextHumanEdits, options.entities);
+      const ownerHydrated = hydrateOwnerSuggestions(entityHydrated.data, options.users);
       setEntities(options.entities);
       setUsers(options.users);
       setFollowUpAuditors(options.follow_up_auditors);
+      setHumanEdits(ownerHydrated.data);
+      setAuditUnmatchedEntities(entityHydrated.auditUnmatchedEntities);
+      setActionPlanUnmatchedEntities(entityHydrated.actionPlanUnmatchedEntities);
+      setOwnerSuggestions(ownerHydrated.ownerSuggestions);
+      setBulkFollowUpAuditorId(null);
+      setFollowUpAuditorOverrides({});
+    } else {
+      setHumanEdits(nextHumanEdits);
+      setAuditUnmatchedEntities([]);
+      setActionPlanUnmatchedEntities({});
+      setOwnerSuggestions({});
+      setBulkFollowUpAuditorId(null);
+      setFollowUpAuditorOverrides({});
     }
 
     setIsLoading(false);
@@ -260,6 +485,69 @@ export default function ExtractionReviewPage() {
         };
       }),
     });
+  }
+
+  function updateOwner(findingIndex: number, actionPlanIndex: number, ownerUserId: string | null) {
+    const ownerKey = `${findingIndex}:${actionPlanIndex}`;
+    updateActionPlan(findingIndex, actionPlanIndex, { owner_user_id: ownerUserId });
+    setOwnerSuggestions((current) => ({
+      ...current,
+      [ownerKey]: {
+        ownerAiSuggested: false,
+        ownerHintUser: null,
+      },
+    }));
+  }
+
+  function acceptOwnerHint(findingIndex: number, actionPlanIndex: number, user: OwnerHintUser) {
+    const ownerKey = `${findingIndex}:${actionPlanIndex}`;
+    updateActionPlan(findingIndex, actionPlanIndex, { owner_user_id: user.id });
+    setOwnerSuggestions((current) => ({
+      ...current,
+      [ownerKey]: {
+        ownerAiSuggested: true,
+        ownerHintUser: null,
+      },
+    }));
+  }
+
+  function updateBulkFollowUpAuditor(nextAuditorId: string | null) {
+    setBulkFollowUpAuditorId(nextAuditorId);
+    setHumanEdits((current) => ({
+      ...current,
+      findings: (current.findings ?? []).map((finding, findingIndex) => ({
+        ...finding,
+        action_plans: (finding.action_plans ?? []).map((actionPlan, actionPlanIndex) => {
+          const actionPlanKey = `${findingIndex}:${actionPlanIndex}`;
+          if (followUpAuditorOverrides[actionPlanKey]) {
+            return actionPlan;
+          }
+
+          return {
+            ...actionPlan,
+            follow_up_auditor_user_id: nextAuditorId,
+          };
+        }),
+      })),
+    }));
+  }
+
+  function updateFollowUpAuditor(findingIndex: number, actionPlanIndex: number, auditorUserId: string | null) {
+    const actionPlanKey = `${findingIndex}:${actionPlanIndex}`;
+    updateActionPlan(findingIndex, actionPlanIndex, { follow_up_auditor_user_id: auditorUserId });
+    setFollowUpAuditorOverrides((current) => ({
+      ...current,
+      [actionPlanKey]: true,
+    }));
+  }
+
+  function resetFollowUpAuditorToDefault(findingIndex: number, actionPlanIndex: number) {
+    const actionPlanKey = `${findingIndex}:${actionPlanIndex}`;
+    updateActionPlan(findingIndex, actionPlanIndex, { follow_up_auditor_user_id: bulkFollowUpAuditorId });
+    setFollowUpAuditorOverrides((current) => ({
+      ...current,
+      [actionPlanKey]: false,
+    }));
   }
 
   async function saveEdits() {
@@ -426,11 +714,12 @@ export default function ExtractionReviewPage() {
                 </div>
                 <div className="record-field record-field--wide">
                   <span>Entities</span>
-                  <EntityCheckboxes
+                  <EntityMultiSelect
                     entities={entities}
                     selectedIds={humanEdits.entity_ids ?? []}
                     onChange={(entity_ids) => patchData({ entity_ids })}
                   />
+                  <UnmatchedEntityChips values={auditUnmatchedEntities} />
                   {humanEdits.entities_mentioned?.length ? (
                     <em>Mentioned: {humanEdits.entities_mentioned.join(", ")}</em>
                   ) : null}
@@ -500,6 +789,23 @@ export default function ExtractionReviewPage() {
                   </button>
                 </div>
               </header>
+              <section className="ai-bulk-follow-up-card">
+                <div>
+                  <strong>Default follow-up auditor</strong>
+                  <p>Applies to all action plans unless individually overridden</p>
+                </div>
+                <select
+                  value={bulkFollowUpAuditorId ?? ""}
+                  onChange={(event) => updateBulkFollowUpAuditor(event.target.value || null)}
+                >
+                  <option value="">Optional — leave unset</option>
+                  {followUpAuditors.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.name}
+                    </option>
+                  ))}
+                </select>
+              </section>
               <div className="ai-finding-editor-stack">
                 {(humanEdits.findings ?? []).map((finding, findingIndex) => {
                   const expanded = expandedFindings.has(findingIndex);
@@ -557,53 +863,87 @@ export default function ExtractionReviewPage() {
                             </ReviewField>
                           </div>
                           <div className="ai-ap-subcards">
-                            {(finding.action_plans ?? []).map((actionPlan, actionPlanIndex) => (
-                              <article className="ai-ap-subcard" key={actionPlanIndex}>
-                                <div className="records-form-grid">
-                                  <ReviewField label="AP reference">
-                                    <input value={actionPlan.reference ?? ""} onChange={(event) => updateActionPlan(findingIndex, actionPlanIndex, { reference: event.target.value })} />
-                                  </ReviewField>
-                                  <ReviewField label="Target date">
-                                    <input type="date" value={actionPlan.target_date ?? ""} onChange={(event) => updateActionPlan(findingIndex, actionPlanIndex, { target_date: event.target.value })} />
-                                  </ReviewField>
-                                  <ReviewField label="Description">
-                                    <textarea value={actionPlan.description ?? ""} onChange={(event) => updateActionPlan(findingIndex, actionPlanIndex, { description: event.target.value })} />
-                                  </ReviewField>
-                                  <div className="record-field record-field--wide">
-                                    <span>Priority</span>
-                                    <Segmented options={PRIORITIES} value={actionPlan.priority ?? "Moderate"} onChange={(priority) => updateActionPlan(findingIndex, actionPlanIndex, { priority })} />
+                            {(finding.action_plans ?? []).map((actionPlan, actionPlanIndex) => {
+                              const actionPlanKey = `${findingIndex}:${actionPlanIndex}`;
+                              const ownerSuggestion = ownerSuggestions[actionPlanKey];
+                              const selectedOwner = users.find((user) => user.id === actionPlan.owner_user_id);
+                              const followUpAuditorOverridden = Boolean(followUpAuditorOverrides[actionPlanKey]);
+
+                              return (
+                                <article className="ai-ap-subcard" key={actionPlanIndex}>
+                                  <div className="records-form-grid">
+                                    <ReviewField label="AP reference">
+                                      <input value={actionPlan.reference ?? ""} onChange={(event) => updateActionPlan(findingIndex, actionPlanIndex, { reference: event.target.value })} />
+                                    </ReviewField>
+                                    <ReviewField label="Target date">
+                                      <input type="date" value={actionPlan.target_date ?? ""} onChange={(event) => updateActionPlan(findingIndex, actionPlanIndex, { target_date: event.target.value })} />
+                                    </ReviewField>
+                                    <ReviewField label="Description">
+                                      <textarea value={actionPlan.description ?? ""} onChange={(event) => updateActionPlan(findingIndex, actionPlanIndex, { description: event.target.value })} />
+                                    </ReviewField>
+                                    <div className="record-field record-field--wide">
+                                      <span>Priority</span>
+                                      <Segmented options={PRIORITIES} value={actionPlan.priority ?? "Moderate"} onChange={(priority) => updateActionPlan(findingIndex, actionPlanIndex, { priority })} />
+                                    </div>
+                                    <div className="record-field record-field--wide">
+                                      <span>Entities</span>
+                                      <EntityMultiSelect
+                                        entities={entities}
+                                        selectedIds={actionPlan.entity_ids ?? []}
+                                        onChange={(entity_ids) => updateActionPlan(findingIndex, actionPlanIndex, { entity_ids })}
+                                      />
+                                      <UnmatchedEntityChips values={actionPlanUnmatchedEntities[actionPlanKey] ?? []} />
+                                    </div>
+                                    <ReviewField label="Owner">
+                                      <select value={actionPlan.owner_user_id ?? ""} onChange={(event) => updateOwner(findingIndex, actionPlanIndex, event.target.value || null)}>
+                                        <option value="">Unassigned</option>
+                                        {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+                                      </select>
+                                      {ownerSuggestion?.ownerAiSuggested && selectedOwner ? (
+                                        <span className="ai-owner-suggested-tag">✦ AI suggested</span>
+                                      ) : null}
+                                      {selectedOwner ? (
+                                        <span className="ai-owner-info-strip">{userInfoText(selectedOwner)}</span>
+                                      ) : null}
+                                      {ownerSuggestion?.ownerHintUser ? (
+                                        <button
+                                          className="ai-owner-hint-chip"
+                                          onClick={() => acceptOwnerHint(findingIndex, actionPlanIndex, ownerSuggestion.ownerHintUser!)}
+                                          type="button"
+                                        >
+                                          AI suggested: {ownerSuggestion.ownerHintUser.name}
+                                        </button>
+                                      ) : null}
+                                    </ReviewField>
+                                    <ReviewField label="Follow-up auditor">
+                                      <select value={actionPlan.follow_up_auditor_user_id ?? ""} onChange={(event) => updateFollowUpAuditor(findingIndex, actionPlanIndex, event.target.value || null)}>
+                                        <option value="">Optional</option>
+                                        {followUpAuditors.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+                                      </select>
+                                      <FollowUpAuditorIndicator
+                                        bulkFollowUpAuditorId={bulkFollowUpAuditorId}
+                                        isOverridden={followUpAuditorOverridden}
+                                        onReset={() => resetFollowUpAuditorToDefault(findingIndex, actionPlanIndex)}
+                                      />
+                                    </ReviewField>
+                                    <ReviewField label="Required evidence">
+                                      <input value={actionPlan.required_evidence ?? ""} onChange={(event) => updateActionPlan(findingIndex, actionPlanIndex, { required_evidence: event.target.value })} />
+                                    </ReviewField>
                                   </div>
-                                  <div className="record-field record-field--wide">
-                                    <span>Entities</span>
-                                    <EntityCheckboxes
-                                      entities={entities}
-                                      selectedIds={actionPlan.entity_ids ?? []}
-                                      onChange={(entity_ids) => updateActionPlan(findingIndex, actionPlanIndex, { entity_ids })}
-                                    />
-                                  </div>
-                                  <ReviewField label="Owner">
-                                    <select value={actionPlan.owner_user_id ?? ""} onChange={(event) => updateActionPlan(findingIndex, actionPlanIndex, { owner_user_id: event.target.value || null })}>
-                                      <option value="">Unassigned</option>
-                                      {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
-                                    </select>
-                                  </ReviewField>
-                                  <ReviewField label="Follow-up auditor">
-                                    <select value={actionPlan.follow_up_auditor_user_id ?? ""} onChange={(event) => updateActionPlan(findingIndex, actionPlanIndex, { follow_up_auditor_user_id: event.target.value || null })}>
-                                      <option value="">Optional</option>
-                                      {followUpAuditors.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
-                                    </select>
-                                  </ReviewField>
-                                  <ReviewField label="Required evidence">
-                                    <input value={actionPlan.required_evidence ?? ""} onChange={(event) => updateActionPlan(findingIndex, actionPlanIndex, { required_evidence: event.target.value })} />
-                                  </ReviewField>
-                                </div>
-                              </article>
-                            ))}
+                                </article>
+                              );
+                            })}
                             <button
                               className="button"
                               onClick={() =>
                                 updateFinding(findingIndex, {
-                                  action_plans: [...(finding.action_plans ?? []), emptyActionPlan(finding.external_ref)],
+                                  action_plans: [
+                                    ...(finding.action_plans ?? []),
+                                    {
+                                      ...emptyActionPlan(finding.external_ref),
+                                      follow_up_auditor_user_id: bulkFollowUpAuditorId,
+                                    },
+                                  ],
                                 })
                               }
                               type="button"
@@ -690,36 +1030,45 @@ function Segmented<T extends string>({
   );
 }
 
-function EntityCheckboxes({
-  entities,
-  selectedIds,
-  onChange,
-}: {
-  entities: EntityOption[];
-  selectedIds: string[];
-  onChange: (ids: string[]) => void;
-}) {
+function UnmatchedEntityChips({ values }: { values: string[] }) {
+  if (values.length === 0) return null;
+
   return (
-    <div className="record-checkbox-grid">
-      {entities.map((entity) => (
-        <label className="record-checkbox" key={entity.id}>
-          <input
-            checked={selectedIds.includes(entity.id)}
-            onChange={(event) => {
-              if (event.target.checked) {
-                onChange([...selectedIds, entity.id]);
-              } else {
-                onChange(selectedIds.filter((id) => id !== entity.id));
-              }
-            }}
-            type="checkbox"
-          />
-          <span>
-            <strong>{entity.code}</strong>
-            <em>{entity.full_name}</em>
-          </span>
-        </label>
+    <div className="ai-unmatched-entities">
+      {values.map((value) => (
+        <span className="ai-unmatched-entity-chip" key={value}>
+          Unmatched: {value}
+        </span>
       ))}
     </div>
+  );
+}
+
+function FollowUpAuditorIndicator({
+  bulkFollowUpAuditorId,
+  isOverridden,
+  onReset,
+}: {
+  bulkFollowUpAuditorId: string | null;
+  isOverridden: boolean;
+  onReset: () => void;
+}) {
+  if (isOverridden) {
+    return (
+      <span className="ai-follow-up-indicator">
+        <span>manual</span>
+        <button onClick={onReset} type="button">
+          Reset to default
+        </button>
+      </span>
+    );
+  }
+
+  if (!bulkFollowUpAuditorId) return null;
+
+  return (
+    <span className="ai-follow-up-indicator">
+      <span>default</span>
+    </span>
   );
 }
