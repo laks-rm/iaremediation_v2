@@ -32,9 +32,9 @@ function getClientIp(request: NextRequest) {
   return forwardedFor?.split(",")[0]?.trim() ?? request.headers.get("x-real-ip");
 }
 
-async function getUniqueDisplayId() {
+async function getUniqueDisplayId(auditReportIssueYear?: number) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const displayId = generateDisplayId();
+    const displayId = generateDisplayId(auditReportIssueYear);
     const existing = await prisma.action_plans.findUnique({
       where: {
         display_id: displayId,
@@ -147,13 +147,16 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const auditEntityIds = await resolveEntityIds(finalData);
     const errors: string[] = [];
 
+    const reportIssueDate = parseNullableDate(finalData.report_issue_date);
+    const auditReportIssueYear = reportIssueDate ? reportIssueDate.getFullYear() : undefined;
+    
     const audit = await prisma.audits.create({
       data: {
         name: nullableString(finalData.audit_name ?? finalData.name) ?? extraction.filename,
         reference_number: nullableString(finalData.reference_number),
         audit_type: (finalData.audit_type ?? "IT") as AuditType,
         opinion_rating: finalData.opinion_rating as AuditOpinionRating | null | undefined,
-        report_issue_date: parseNullableDate(finalData.report_issue_date),
+        report_issue_date: reportIssueDate,
         executive_summary: nullableString(finalData.executive_summary),
         report_pdf_path: extraction.file_path,
         report_pdf_filename: extraction.filename,
@@ -210,7 +213,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
           try {
             const actionPlan = await prisma.action_plans.create({
               data: {
-                display_id: await getUniqueDisplayId(),
+                display_id: await getUniqueDisplayId(auditReportIssueYear),
                 finding_id: finding.id,
                 description:
                   nullableString(actionPlanData.description) ??

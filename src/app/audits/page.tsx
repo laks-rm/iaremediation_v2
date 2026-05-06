@@ -1,5 +1,6 @@
 "use client";
 
+import { getSession } from "next-auth/react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -87,6 +88,8 @@ export default function AuditsPage() {
   const [entityId, setEntityId] = useState("");
   const [opinionRating, setOpinionRating] = useState("");
   const [year, setYear] = useState("");
+  const [myAudits, setMyAudits] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const loadAudits = useCallback(() => {
     let isMounted = true;
@@ -124,6 +127,14 @@ export default function AuditsPage() {
 
   useEffect(() => loadAudits(), [loadAudits]);
 
+  useEffect(() => {
+    getSession().then((session) => {
+      if (session?.user?.id) {
+        setCurrentUserId(session.user.id);
+      }
+    });
+  }, []);
+
   const entities = useMemo(() => {
     const map = new Map<string, { code: string; full_name: string }>();
     audits.forEach((audit) => {
@@ -146,7 +157,7 @@ export default function AuditsPage() {
 
   const filteredAudits = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    return audits.filter((audit) => {
+    let filtered = audits.filter((audit) => {
       const matchesSearch =
         !needle ||
         [audit.name, audit.reference_number ?? ""].join(" ").toLowerCase().includes(needle);
@@ -161,6 +172,8 @@ export default function AuditsPage() {
 
       return matchesSearch && matchesType && matchesEntity && matchesOpinion && matchesYear;
     });
+
+    return filtered;
   }, [auditType, audits, entityId, opinionRating, search, year]);
 
   function handleExport() {
@@ -216,6 +229,14 @@ export default function AuditsPage() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
+          <label>
+            <input
+              checked={myAudits}
+              onChange={(event) => setMyAudits(event.target.checked)}
+              type="checkbox"
+            />
+            My audits
+          </label>
           <select value={auditType} onChange={(event) => setAuditType(event.target.value)}>
             <option value="">All audit types</option>
             {AUDIT_TYPES.map((type) => (
@@ -285,18 +306,19 @@ export default function AuditsPage() {
 
             {!isLoading
               ? filteredAudits.map((audit) => (
-                  <Link className="audits-row" href={`/audits/${audit.id}`} key={audit.id}>
-                    <span className="audits-mono">{audit.reference_number || "N/A"}</span>
-                    <span>
-                      <strong>{audit.name}</strong>
-                    </span>
-                    <span>
-                      <i className={auditTypeClass(audit.audit_type)}>
-                        {AUDIT_TYPE_LABELS[audit.audit_type]}
-                      </i>
-                    </span>
-                    <span>
-                      <i className={opinionClass(audit.opinion_rating)}>
+                  <div className="audits-row-wrap" key={audit.id}>
+                    <Link className="audits-row" href={`/audits/${audit.id}`}>
+                      <span className="audits-mono">{audit.reference_number || "N/A"}</span>
+                      <span>
+                        <strong>{audit.name}</strong>
+                      </span>
+                      <span>
+                        <i className={auditTypeClass(audit.audit_type)}>
+                          {AUDIT_TYPE_LABELS[audit.audit_type]}
+                        </i>
+                      </span>
+                      <span>
+                        <i className={opinionClass(audit.opinion_rating)}>
                         {audit.opinion_rating ?? "Not set"}
                       </i>
                     </span>
@@ -312,6 +334,21 @@ export default function AuditsPage() {
                     </span>
                     <span className="audits-action">View →</span>
                   </Link>
+                  <button
+                    className="audits-row-copy-link"
+                    onClick={async (event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      const url = `${window.location.origin}/audits/${audit.id}`;
+                      await navigator.clipboard.writeText(url);
+                      toast.success("Link copied!");
+                    }}
+                    title="Copy link to this audit"
+                    type="button"
+                  >
+                    🔗
+                  </button>
+                </div>
                 ))
               : null}
           </div>

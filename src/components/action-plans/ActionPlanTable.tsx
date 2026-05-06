@@ -195,6 +195,7 @@ export type Filters = {
   audit_type: string;
   department: string;
   overdue: boolean;
+  assigned_to_me: boolean;
   sort_by: string;
   sort_dir: string;
 };
@@ -585,7 +586,7 @@ function ClosureDateField({
       ) : value ? (
         <p>{formatClosureDate(value)}</p>
       ) : (
-        <p style={{ color: "#6B6860" }}>Not recorded</p>
+        <p style={{ color: "var(--text3)" }}>Not recorded</p>
       )}
     </div>
   );
@@ -832,6 +833,14 @@ export default function ActionPlanTable({
             Overdue only
           </label>
         ) : null}
+        <label>
+          <input
+            checked={filters.assigned_to_me}
+            onChange={(event) => setFilter("assigned_to_me", event.target.checked)}
+            type="checkbox"
+          />
+          Assigned to me
+        </label>
         {showGroupingToggle ? (
           <label>
             <input
@@ -1053,6 +1062,7 @@ function ActionPlanRows({
   sortBy: SortBy | null;
   sortDir: "asc" | "desc" | null;
 }) {
+  const toast = useToast();
   const [openFilter, setOpenFilter] = useState<FilterColumn | null>(null);
   const [draftValues, setDraftValues] = useState<string[]>([]);
   const [auditSearch, setAuditSearch] = useState("");
@@ -1348,6 +1358,19 @@ function ActionPlanRows({
               }}
             >
               <ActionPlanSummary actionPlan={actionPlan} />
+            </button>
+            <button
+              className="dashboard-row-copy-link"
+              onClick={async (event) => {
+                event.stopPropagation();
+                const url = `${window.location.origin}/action-plans/${actionPlan.id}`;
+                await navigator.clipboard.writeText(url);
+                toast.success("Link copied!");
+              }}
+              title="Copy link to this action plan"
+              type="button"
+            >
+              🔗
             </button>
 
             {isExpanded ? (
@@ -1748,9 +1771,14 @@ function ExpandedActionPlan({
             Original: {formatDate(actionPlan.original_target_date)} | Current:{" "}
             {formatDate(actionPlan.current_target_date)}
           </span>
-          <button className="button" disabled={!canEdit} onClick={() => setRevisionOpen((current) => !current)} type="button">
-            Request revision
-          </button>
+          <div className="button-with-tooltip">
+            <button className="button" disabled={!canEdit} onClick={() => setRevisionOpen((current) => !current)} type="button">
+              Request new target date
+            </button>
+            {!canEdit ? null : (
+              <span className="button-tooltip">Request a new target date for this action plan. The change will be logged and tracked.</span>
+            )}
+          </div>
         </div>
         {revisionOpen ? (
           <form className="comment-form revision-form" onSubmit={reviseTargetDate}>
@@ -1785,7 +1813,7 @@ function ExpandedActionPlan({
                 alignItems: "center",
                 background: "transparent",
                 border: 0,
-                color: "#6B6860",
+                color: "var(--text3)",
                 cursor: "pointer",
                 display: "inline-flex",
                 fontSize: 12,
@@ -1820,13 +1848,13 @@ function ExpandedActionPlan({
                       padding: "6px 10px",
                     }}
                   >
-                    <strong style={{ color: "#161616", display: "block", fontSize: 12 }}>
+                    <strong style={{ color: "var(--text)", display: "block", fontSize: 12 }}>
                       {formatRevisionDate(revision.old_date)} → {formatRevisionDate(revision.new_date)}
                     </strong>
-                    <span style={{ color: "#6B6860", display: "block", fontSize: 12 }}>
+                    <span style={{ color: "var(--text2)", display: "block", fontSize: 12 }}>
                       {revision.justification}
                     </span>
-                    <span style={{ color: "#999", display: "block", fontSize: 10 }}>
+                    <span style={{ color: "var(--text3)", display: "block", fontSize: 10 }}>
                       Revised by {revision.revised_by.name} on {formatDateTime(revision.revised_at)}
                     </span>
                   </div>
@@ -1883,8 +1911,8 @@ function ExpandedActionPlan({
                     >
                       {evidence.original_name}
                     </a>
-                    <span style={{ color: "#777" }}>{formatFileSize(evidence.file_size)}</span>
-                    <span style={{ color: "#777" }}>{formatDate(evidence.created_at)}</span>
+                    <span style={{ color: "var(--text3)" }}>{formatFileSize(evidence.file_size)}</span>
+                    <span style={{ color: "var(--text3)" }}>{formatDate(evidence.created_at)}</span>
                     <button
                       disabled={analyzingEvidenceId === evidence.id}
                       onClick={() => analyzeEvidence(evidence)}
@@ -1969,7 +1997,7 @@ function ExpandedActionPlan({
           {actionPlan.comments.map((item) => (
             <p key={item.id}>
               <strong>{item.user.name}</strong>{" "}
-              <span style={{ color: "#999", fontSize: 11 }}>
+              <span style={{ color: "var(--text3)", fontSize: 11 }}>
                 {formatDateTime(item.created_at)}
               </span>
               : {item.comment}
@@ -2119,9 +2147,9 @@ function CompactAssignmentSection({
             <span
               style={{
                 alignItems: "center",
-                background: "#f3f4f6",
+                background: "var(--surface2)",
                 borderRadius: "50%",
-                color: "#555",
+                color: "var(--text)",
                 display: "inline-flex",
                 fontSize: 10,
                 height: 24,
@@ -2131,7 +2159,7 @@ function CompactAssignmentSection({
             >
               {getInitials(assignment.user.name)}
             </span>
-            <span style={{ color: "#161616", fontSize: 12, fontWeight: 500 }}>
+            <span style={{ color: "var(--text)", fontSize: 12, fontWeight: 500 }}>
               {assignment.user.name}
             </span>
             {assignment.is_primary ? (
@@ -2153,7 +2181,7 @@ function CompactAssignmentSection({
                 style={{
                   background: "transparent",
                   border: 0,
-                  color: "#777",
+                  color: "var(--text3)",
                   cursor: "pointer",
                   fontSize: 11,
                   padding: 2,
@@ -2166,7 +2194,7 @@ function CompactAssignmentSection({
           </div>
         ))
       ) : (
-        <span style={{ color: "#777", fontSize: 12 }}>{emptyText}</span>
+        <span style={{ color: "var(--text3)", fontSize: 12 }}>{emptyText}</span>
       )}
 
       {canManage ? (
@@ -2192,7 +2220,7 @@ function CompactAssignmentSection({
               style={{
                 background: "transparent",
                 border: 0,
-                color: "#777",
+                color: "var(--text3)",
                 cursor: "pointer",
                 fontSize: 12,
                 padding: 0,
@@ -2257,10 +2285,10 @@ function AuditLogTimeline({ entries }: { entries: AuditLogEntry[] }) {
               ) : null}
             </span>
             <span style={{ display: "grid", gap: 2, paddingBottom: 10 }}>
-              <span style={{ color: "#161616", fontSize: 12, whiteSpace: "pre-line" }}>
+              <span style={{ color: "var(--text)", fontSize: 12, whiteSpace: "pre-line" }}>
                 {formatAuditLogEntry(entry)}
               </span>
-              <span style={{ color: "#999", fontSize: 11 }}>
+              <span style={{ color: "var(--text3)", fontSize: 11 }}>
                 {entry.user?.name ?? "System"} · {formatDate(entry.created_at)}
               </span>
             </span>

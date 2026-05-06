@@ -710,7 +710,7 @@ export async function GET(request: NextRequest) {
     const today = getStartOfTodayUtc();
     const filters = parseFilters(request);
     const mustScopeToUser =
-      currentUser.role === "Auditee" || getBooleanParam(request, "my_items_only");
+      currentUser.role === "Auditee" || getBooleanParam(request, "my_items_only") || filters.assigned_to_me;
 
     const baseWhere: Prisma.action_plansWhereInput = {
       is_deleted: false,

@@ -116,8 +116,8 @@ export default function AiIngestPage() {
       }
 
       const extractionId =
-        body && typeof body === "object" && "extraction_id" in body
-          ? String(body.extraction_id)
+        body && typeof body === "object" && "extractionId" in body
+          ? String(body.extractionId)
           : "";
       router.push(`/ai/extractions/${extractionId}`);
     } catch (caughtError) {
@@ -159,12 +159,12 @@ export default function AiIngestPage() {
             ) : null}
           </div>
           <button className="button button--primary" disabled={isUploading || !file} onClick={upload} type="button">
-            {isUploading ? "Extracting from report..." : "Upload and Extract"}
+            {isUploading ? "Uploading..." : "Upload and Extract"}
           </button>
           {isUploading ? (
             <div className="ai-progress">
               <span />
-              Extracting from report…
+              Uploading PDF…
             </div>
           ) : null}
         </section>

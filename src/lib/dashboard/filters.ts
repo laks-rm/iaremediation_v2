@@ -83,6 +83,7 @@ export type ParsedFilters = {
   audit_type: AuditType[];
   department: string;
   overdue: boolean;
+  assigned_to_me: boolean;
   sort_by: SortBy | null;
   sort_dir: SortDir;
 };
@@ -107,6 +108,13 @@ export function getOwnershipScope(userId: string): Prisma.action_plansWhereInput
       },
       {
         action_plan_line_managers: {
+          some: {
+            user_id: userId,
+          },
+        },
+      },
+      {
+        action_plan_follow_up_auditors: {
           some: {
             user_id: userId,
           },
@@ -170,6 +178,7 @@ export function parseFilters(request: NextRequest): ParsedFilters {
     audit_type: parseEnumList(searchParams, ["audit_type"], AUDIT_TYPES),
     department: parseStringParam(searchParams, ["department"], 120),
     overdue: searchParams.get("overdue") === "1" || getBooleanParam(request, "overdue_only"),
+    assigned_to_me: searchParams.get("assigned_to_me") === "1" || getBooleanParam(request, "assigned_to_me"),
     sort_by: sortBy,
     sort_dir: sortDir,
   };

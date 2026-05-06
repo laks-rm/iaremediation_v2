@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import AppLayout from "../../../components/AppLayout";
 import ConfirmDialog from "../../../components/ConfirmDialog";
 import EmptyState from "../../../components/EmptyState";
+import { useToast } from "../../../components/Toast";
 import { AUDIT_TYPE_LABELS, STATUS_LABELS } from "../../../lib/constants";
 
 type Role = "AuditTeam" | "Viewer" | "Auditee" | "Pending";
@@ -128,6 +129,7 @@ function getSnippet(value: string | null, expanded: boolean) {
 export default function AuditDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const toast = useToast();
   const auditId = params.id;
   const [audit, setAudit] = useState<AuditDetail | null>(null);
   const [role, setRole] = useState<Role | null>(null);
@@ -383,6 +385,18 @@ export default function AuditDetailPage() {
                 📎 {audit.report_pdf_filename} Download →
               </a>
             ) : null}
+            <button
+              className="button"
+              onClick={async () => {
+                const url = `${window.location.origin}/audits/${audit.id}`;
+                await navigator.clipboard.writeText(url);
+                toast.success("Link copied!");
+              }}
+              title="Copy link to this audit"
+              type="button"
+            >
+              🔗 Copy Link
+            </button>
             {canEdit ? (
               <button className="button button--danger" onClick={() => setDeleteAuditOpen(true)} type="button">
                 Delete Audit

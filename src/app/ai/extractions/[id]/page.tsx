@@ -388,6 +388,13 @@ export default function ExtractionReviewPage() {
   const [error, setError] = useState("");
   const [approveProgress, setApproveProgress] = useState<string[]>([]);
   const [createdAuditId, setCreatedAuditId] = useState("");
+  const [isRetrying, setIsRetrying] = useState(false);
+
+  const isProcessing =
+    extraction?.status === "Pending" &&
+    extraction.extracted_json &&
+    typeof extraction.extracted_json === "object" &&
+    Object.keys(extraction.extracted_json).length === 0;
 
   const loadExtraction = useCallback(async () => {
     setIsLoading(true);
@@ -443,6 +450,63 @@ export default function ExtractionReviewPage() {
       setIsLoading(false);
     });
   }, [loadExtraction]);
+
+  useEffect(() => {
+    if (!extraction || !isProcessing) {
+      return;
+    }
+
+    let pollCount = 0;
+    const maxPolls = 36;
+    const startTime = Date.now();
+    let intervalId: NodeJS.Timeout;
+
+    const poll = async () => {
+      pollCount += 1;
+      const elapsedMs = Date.now() - startTime;
+
+      if (pollCount > maxPolls || elapsedMs > 180000) {
+        clearInterval(intervalId);
+        setError("This is taking longer than expected. Refresh the page to check progress.");
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/v1/ai/extractions/${extractionId}/status`);
+        const body = await readResponseBody(response);
+
+        if (!response.ok) {
+          return;
+        }
+
+        const statusData = body as { id: string; status: Status; rejection_reason: string | null };
+
+        if (statusData.status !== "Pending" || (extraction.extracted_json && Object.keys(extraction.extracted_json).length > 0)) {
+          clearInterval(intervalId);
+          await loadExtraction();
+        }
+      } catch {
+        return;
+      }
+    };
+
+    const getInterval = () => {
+      const elapsed = Date.now() - startTime;
+      return elapsed > 60000 ? 10000 : 5000;
+    };
+
+    intervalId = setInterval(poll, getInterval());
+
+    const adjustInterval = setInterval(() => {
+      clearInterval(intervalId);
+      intervalId = setInterval(poll, getInterval());
+    }, 1000);
+
+    return () => {
+      clearInterval(intervalId);
+      clearInterval(adjustInterval);
+    };
+  }, [extraction, extractionId, isProcessing, loadExtraction]);
 
   const counts = useMemo(
     () => ({
@@ -611,6 +675,30 @@ export default function ExtractionReviewPage() {
     await loadExtraction();
   }
 
+  async function retry() {
+    setIsRetrying(true);
+    setError("");
+
+    try {
+      const response = await fetch(`/api/v1/ai/extractions/${extractionId}/retry`, {
+        method: "POST",
+      });
+      const body = await readResponseBody(response);
+
+      if (!response.ok) {
+        setError(responseError(body, "Unable to retry extraction."));
+        setIsRetrying(false);
+        return;
+      }
+
+      await loadExtraction();
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Unable to retry extraction.");
+    } finally {
+      setIsRetrying(false);
+    }
+  }
+
   if (isLoading) {
     return (
       <AppLayout>
@@ -641,7 +729,7 @@ export default function ExtractionReviewPage() {
             <h1>{extraction.filename}</h1>
             <span className={statusClass(extraction.status)}>{extraction.status}</span>
           </div>
-          {extraction.status === "Pending" ? (
+          {extraction.status === "Pending" && !isProcessing ? (
             <div className="ai-header-actions">
               <button className="button" disabled={isSaving} onClick={saveEdits} type="button">
                 {isSaving ? "Saving..." : "Save Edits"}
@@ -654,7 +742,24 @@ export default function ExtractionReviewPage() {
               </button>
             </div>
           ) : null}
+          {extraction.status === "Rejected" ? (
+            <div className="ai-header-actions">
+              <button className="button button--primary" disabled={isRetrying} onClick={retry} type="button">
+                {isRetrying ? "Retrying..." : "Retry Extraction"}
+              </button>
+            </div>
+          ) : null}
         </header>
+
+        {isProcessing ? (
+          <section className="ai-processing-banner">
+            <div className="ai-progress">
+              <span />
+              <strong>Processing extraction...</strong>
+            </div>
+            <p>Claude is reading your PDF. This usually takes 20–60 seconds.</p>
+          </section>
+        ) : null}
 
         {error ? <div className="auth-error">{error}</div> : null}
         {createdAuditId ? (
@@ -669,16 +774,25 @@ export default function ExtractionReviewPage() {
           </ul>
         ) : null}
 
-        <section className="ai-sense-check">
-          <div><strong>{counts.controlAreas}</strong><span>Control areas</span></div>
-          <div><strong>{counts.findings}</strong><span>Findings</span></div>
-          <div><strong>{counts.actionPlans}</strong><span>Action plans</span></div>
-        </section>
+        {extraction.status === "Rejected" && extraction.rejection_reason ? (
+          <section className="ai-rejection-card">
+            <strong>Extraction failed</strong>
+            <p>{extraction.rejection_reason}</p>
+          </section>
+        ) : null}
 
-        <section className="ai-review-grid">
-          <main className="ai-review-main">
-            <section className="ai-review-card">
-              <h2>Extracted Audit Data</h2>
+        {isProcessing ? null : (
+          <>
+            <section className="ai-sense-check">
+              <div><strong>{counts.controlAreas}</strong><span>Control areas</span></div>
+              <div><strong>{counts.findings}</strong><span>Findings</span></div>
+              <div><strong>{counts.actionPlans}</strong><span>Action plans</span></div>
+            </section>
+
+            <section className="ai-review-grid">
+              <main className="ai-review-main">
+                <section className="ai-review-card">
+                  <h2>Extracted Audit Data</h2>
               <div className="records-form-grid">
                 <ReviewField label="Audit name">
                   <input
@@ -970,6 +1084,8 @@ export default function ExtractionReviewPage() {
             </section>
           </aside>
         </section>
+          </>
+        )}
 
         {isRejecting ? (
           <div className="confirm-dialog__backdrop" role="dialog" aria-modal="true">

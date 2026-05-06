@@ -858,7 +858,12 @@ function NewRecordPageContent() {
           </div>
 
           <ol className="records-progress">
-            {(mode
+            {mode === "standalone" && step > 0 ? (
+              <li className="records-progress__item records-progress__item--current">
+                <span />
+                <p>Create Standalone Finding</p>
+              </li>
+            ) : (mode
               ? Array.from({ length: totalSteps }, (_, index) => index + 1)
               : [0]
             ).map((item) => (
@@ -918,13 +923,11 @@ function NewRecordPageContent() {
               {mode === "existingAudit" && step === 1 ? renderExistingAuditSelection() : null}
               {mode === "existingAudit" && step === 2 ? renderFlatActionPlans() : null}
               {mode === "existingAudit" && step === 3 ? renderReview() : null}
-              {mode === "standalone" && step === 1 ? renderStandaloneFinding() : null}
-              {mode === "standalone" && step === 2 ? renderFlatActionPlans() : null}
-              {mode === "standalone" && step === 3 ? renderReview() : null}
+              {mode === "standalone" && step === 1 ? renderStandaloneSinglePage() : null}
             </section>
           ) : null}
 
-          {mode && step > 0 ? (
+          {mode && step > 0 && mode !== "standalone" ? (
             <nav className="records-nav">
               <button className="button" disabled={isSubmitting} onClick={goBack} type="button">
                 Back
@@ -940,6 +943,24 @@ function NewRecordPageContent() {
                   type="button"
                 >
                   {isSubmitting ? "Creating..." : isReview ? "Create Records" : "Next"}
+                </button>
+              </span>
+            </nav>
+          ) : null}
+
+          {mode === "standalone" && step === 1 ? (
+            <nav className="records-nav">
+              <button className="button" disabled={isSubmitting} onClick={goBack} type="button">
+                Back
+              </button>
+              <span title={missing.join(", ")}>
+                <button
+                  className="button button--primary"
+                  disabled={missing.length > 0 || isSubmitting}
+                  onClick={submitRecords}
+                  type="button"
+                >
+                  {isSubmitting ? "Creating..." : "Save"}
                 </button>
               </span>
             </nav>
@@ -1327,6 +1348,52 @@ function NewRecordPageContent() {
     );
   }
 
+  function renderStandaloneSinglePage() {
+    return (
+      <>
+        <header className="records-heading">
+          <h1>Create Standalone Finding</h1>
+          <span>Create a finding and action plans without linking to an audit report.</span>
+        </header>
+        <section className="records-card">
+          <h2>Finding Details</h2>
+          {renderFindingFields(standaloneFinding, (patch) =>
+            setStandaloneFinding({ ...standaloneFinding, ...patch }),
+          )}
+        </section>
+        <section className="records-card" style={{ marginTop: 24 }}>
+          <h2>Action Plans</h2>
+          <div className="records-stack">
+            {flatActionPlans.map((actionPlan) => (
+              <ActionPlanCard
+                actionPlan={actionPlan}
+                aiError={aiErrors[actionPlan.id]}
+                aiLoading={aiLoadingId === actionPlan.id}
+                entities={options.entities}
+                followUpAuditors={options.follow_up_auditors}
+                key={actionPlan.id}
+                users={options.users}
+                onGenerate={() => generateEvidence(actionPlan, standaloneFinding)}
+                onRemove={() => removeActionPlan(actionPlan.id)}
+                onUpdate={(patch) => updateActionPlan(actionPlan.id, patch)}
+              />
+            ))}
+            <button className="button button--primary" onClick={() => addActionPlan()} type="button">
+              + Add another action plan
+            </button>
+          </div>
+        </section>
+        {submitProgress.length > 0 ? (
+          <ul className="records-submit-progress">
+            {submitProgress.map((item, index) => (
+              <li key={`${item}-${index}`}>{item}</li>
+            ))}
+          </ul>
+        ) : null}
+      </>
+    );
+  }
+
   function renderFlatActionPlans() {
     const entities = mode === "existingAudit" ? selectedAuditEntities : options.entities;
     const finding =
@@ -1358,7 +1425,7 @@ function NewRecordPageContent() {
             />
           ))}
           <button className="button button--primary" onClick={() => addActionPlan()} type="button">
-            Add Action Plan
+            + Add another action plan
           </button>
         </div>
       </>

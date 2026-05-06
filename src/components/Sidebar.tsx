@@ -281,71 +281,86 @@ export default function Sidebar() {
           <div className="sidebar__section" key={section.title}>
             <p className="sidebar__section-title">{section.title}</p>
             {section.items.map((item) => (
-              <Link
-                className={`sidebar__link${
-                  isActivePath(pathname, item.href)
-                    ? " sidebar__link--active"
-                    : ""
-                }`}
-                href={item.href}
-                key={`${item.href}:${item.label}`}
-                onClick={() => setMobileOpen(false)}
-                title={collapsed ? item.label : undefined}
-              >
-                <span className="sidebar__icon" aria-hidden="true">
-                  {item.icon}
-                </span>
-                <span className="sidebar__label">{item.label}</span>
-                {typeof item.badge === "number" ? (
-                  <span className="sidebar__badge">{item.badge}</span>
+              <div className="sidebar__link-wrapper" key={`${item.href}:${item.label}`}>
+                <Link
+                  className={`sidebar__link${
+                    isActivePath(pathname, item.href)
+                      ? " sidebar__link--active"
+                      : ""
+                  }`}
+                  href={item.href}
+                  onClick={() => setMobileOpen(false)}
+                >
+                  <span className="sidebar__icon" aria-hidden="true">
+                    {item.icon}
+                  </span>
+                  <span className="sidebar__label">{item.label}</span>
+                  {typeof item.badge === "number" ? (
+                    <span className="sidebar__badge">{item.badge}</span>
+                  ) : null}
+                </Link>
+                {collapsed ? (
+                  <span className="sidebar__tooltip">{item.label}</span>
                 ) : null}
-              </Link>
+              </div>
             ))}
           </div>
         ))}
       </nav>
 
       <div className="sidebar__bottom">
-        <button
-          className="sidebar__bottom-button"
-          onClick={openAssistant}
-          title={collapsed ? "AI Assistant" : undefined}
-          type="button"
-        >
-          <span className="sidebar__icon" aria-hidden="true">
-            ✦
-          </span>
-          <span className="sidebar__label">AI Assistant</span>
-        </button>
-
-        {user?.is_admin ? (
+        <div className="sidebar__bottom-button-wrapper">
           <button
             className="sidebar__bottom-button"
-            onClick={() => setNotificationsOpen(true)}
-            title={collapsed ? "Notifications" : undefined}
+            onClick={openAssistant}
             type="button"
           >
             <span className="sidebar__icon" aria-hidden="true">
-              ◉
+              ✦
             </span>
-            <span className="sidebar__label">Notifications</span>
-            {notificationCount > 0 ? <span className="sidebar__badge">{notificationCount}</span> : null}
+            <span className="sidebar__label">AI Assistant</span>
           </button>
+          {collapsed ? (
+            <span className="sidebar__tooltip">AI Assistant</span>
+          ) : null}
+        </div>
+
+        {user?.is_admin ? (
+          <div className="sidebar__bottom-button-wrapper">
+            <button
+              className="sidebar__bottom-button"
+              onClick={() => setNotificationsOpen(true)}
+              type="button"
+            >
+              <span className="sidebar__icon" aria-hidden="true">
+                ◉
+              </span>
+              <span className="sidebar__label">Notifications</span>
+              {notificationCount > 0 ? <span className="sidebar__badge">{notificationCount}</span> : null}
+            </button>
+            {collapsed ? (
+              <span className="sidebar__tooltip">Notifications</span>
+            ) : null}
+          </div>
         ) : null}
 
-        <button
-          className="sidebar__bottom-button"
-          onClick={toggleTheme}
-          title={collapsed ? "Toggle theme" : undefined}
-          type="button"
-        >
-          <span className="sidebar__icon" aria-hidden="true">
-            {theme === "dark" ? "☾" : "☼"}
-          </span>
-          <span className="sidebar__label">
-            {theme === "dark" ? "Dark" : "Light"} Theme
-          </span>
-        </button>
+        <div className="sidebar__bottom-button-wrapper">
+          <button
+            className="sidebar__bottom-button"
+            onClick={toggleTheme}
+            type="button"
+          >
+            <span className="sidebar__icon" aria-hidden="true">
+              {theme === "dark" ? "☾" : "☼"}
+            </span>
+            <span className="sidebar__label">
+              {theme === "dark" ? "Dark" : "Light"} Theme
+            </span>
+          </button>
+          {collapsed ? (
+            <span className="sidebar__tooltip">Toggle theme</span>
+          ) : null}
+        </div>
 
         <div className="sidebar__user" title={collapsed ? user?.name ?? "" : undefined}>
           <span className="sidebar__avatar">{getInitials(user?.name)}</span>
@@ -355,17 +370,21 @@ export default function Sidebar() {
           </span>
         </div>
 
-        <button
-          className="sidebar__bottom-button"
-          onClick={() => signOut({ callbackUrl: "/login" })}
-          title={collapsed ? "Logout" : undefined}
-          type="button"
-        >
-          <span className="sidebar__icon" aria-hidden="true">
-            ⇥
-          </span>
-          <span className="sidebar__label">Logout</span>
-        </button>
+        <div className="sidebar__bottom-button-wrapper">
+          <button
+            className="sidebar__bottom-button"
+            onClick={() => signOut({ callbackUrl: "/login" })}
+            type="button"
+          >
+            <span className="sidebar__icon" aria-hidden="true">
+              ⇥
+            </span>
+            <span className="sidebar__label">Logout</span>
+          </button>
+          {collapsed ? (
+            <span className="sidebar__tooltip">Logout</span>
+          ) : null}
+        </div>
       </div>
       <NotificationsPanel
         isOpen={notificationsOpen}

@@ -49,8 +49,8 @@ function toAuditJson(value: unknown) {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
 
-async function getUniqueDisplayId() {
-  const year = new Date().getFullYear();
+async function getUniqueDisplayId(auditReportIssueYear?: number) {
+  const year = auditReportIssueYear ?? new Date().getFullYear();
 
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const suffix = crypto.randomBytes(3).toString("hex").toUpperCase();
@@ -88,12 +88,21 @@ export async function POST(request: NextRequest) {
       },
       select: {
         id: true,
+        audit: {
+          select: {
+            report_issue_date: true,
+          },
+        },
       },
     });
 
     if (!finding) {
       return NextResponse.json({ error: "Finding not found" }, { status: 404 });
     }
+
+    const auditReportIssueYear = finding.audit?.report_issue_date
+      ? finding.audit.report_issue_date.getFullYear()
+      : undefined;
 
     const entityIds = [...new Set(parsed.data.entity_ids)];
     if (entityIds.length > 0) {
@@ -144,7 +153,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const displayId = await getUniqueDisplayId();
+    const displayId = await getUniqueDisplayId(auditReportIssueYear);
     const actionPlan = await prisma.$transaction(async (tx) => {
       return tx.action_plans.create({
         data: {

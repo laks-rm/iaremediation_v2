@@ -83,6 +83,7 @@ function readActionPlanFilters(searchParams: URLSearchParams): Filters {
     audit_type: searchParams.get("audit_type") ?? "",
     department: searchParams.get("department") ?? "",
     overdue: searchParams.get("overdue") === "1",
+    assigned_to_me: searchParams.get("assigned_to_me") === "1",
     sort_by: searchParams.get("sort_by") ?? "",
     sort_dir: searchParams.get("sort_dir") ?? "",
   };
@@ -134,6 +135,10 @@ function buildUrlQuery(filters: Filters, groupByAudit: boolean) {
     params.set("overdue", "1");
   }
 
+  if (filters.assigned_to_me) {
+    params.set("assigned_to_me", "1");
+  }
+
   if (groupByAudit) {
     params.set("group", "audit");
   }
@@ -160,6 +165,10 @@ function buildDashboardApiQuery(filters: Filters) {
 
   if (filters.overdue) {
     params.set("overdue", "1");
+  }
+
+  if (filters.assigned_to_me) {
+    params.set("assigned_to_me", "1");
   }
 
   return params.toString();

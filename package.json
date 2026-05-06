@@ -3,9 +3,12 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "import:appsheet": "npx ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/import-appsheet.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
+  "dev": "next dev --port 3000",
+  "build": "next build",
+  "start": "next start --port 5000",
+  "import:appsheet": "npx ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/import-appsheet.ts",
+  "test": "echo \"Error: no test specified\" && exit 1"
+},
   "keywords": [],
   "author": "",
   "license": "ISC",
