@@ -8,3 +8,5 @@ uploads/
 *.log
 tsconfig.tsbuildinfo
 .DS_Store
+*.code-workspace
+scripts/data/
