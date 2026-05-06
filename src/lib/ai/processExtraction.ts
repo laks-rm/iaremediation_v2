@@ -5,31 +5,6 @@ import { getFileStream } from "../storage";
 
 const PROMPT_VERSION = "extract-v1.1";
 
-async function readResponseBody(response: Response) {
-  const text = await response.text();
-  if (!text) return null;
-
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return text;
-  }
-}
-
-function getChoiceContent(body: unknown) {
-  if (!body || typeof body !== "object" || !("choices" in body)) {
-    return null;
-  }
-
-  const choices = (body as { choices?: unknown }).choices;
-  if (!Array.isArray(choices)) {
-    return null;
-  }
-
-  const message = (choices[0] as { message?: { content?: unknown } } | undefined)?.message;
-  return typeof message?.content === "string" ? message.content.trim() : null;
-}
-
 function parseJsonOnly(content: string) {
   const cleaned = content
     .replace(/^```json\s*/i, "")
@@ -37,7 +12,23 @@ function parseJsonOnly(content: string) {
     .replace(/```$/i, "")
     .trim();
 
-  return JSON.parse(cleaned) as unknown;
+  // First attempt: direct parse
+  try {
+    return JSON.parse(cleaned) as unknown;
+  } catch {
+    // Second attempt: find the outermost JSON object
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      try {
+        return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1)) as unknown;
+      } catch {
+        // fall through to throw original error
+      }
+    }
+    // Re-throw with the original content for debugging
+    throw new Error(`JSON parse failed. Content starts with: ${cleaned.substring(0, 100)}`);
+  }
 }
 
 function buildExtractionPrompt() {
@@ -133,6 +124,8 @@ export async function processExtraction(extractionId: string): Promise<void> {
       },
       body: JSON.stringify({
         model,
+        stream: true,
+	max_tokens: 16000,
         messages: [
           {
             role: "system",
@@ -156,16 +149,75 @@ export async function processExtraction(extractionId: string): Promise<void> {
       }),
     });
 
-    const body = await readResponseBody(response);
-
     if (!response.ok) {
-      throw new Error(`LiteLLM API returned ${response.status}: ${JSON.stringify(body)}`);
+      const errorText = await response.text();
+      throw new Error(`LiteLLM API returned ${response.status}: ${errorText}`);
     }
 
-    const content = getChoiceContent(body);
+    if (!response.body) {
+      throw new Error("LiteLLM API returned no response body");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let fullContent = "";
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // Process complete lines only
+      const lines = buffer.split("\n");
+      // Keep the last incomplete line in the buffer
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data: ")) continue;
+        const data = trimmed.slice(6);
+        if (data === "[DONE]") continue;
+
+        try {
+          const parsed = JSON.parse(data) as {
+            choices?: Array<{
+              delta?: { content?: string };
+              finish_reason?: string;
+            }>;
+          };
+          const delta = parsed.choices?.[0]?.delta?.content;
+          if (delta) fullContent += delta;
+        } catch {
+          // skip malformed SSE chunks
+        }
+      }
+    }
+
+    // Process any remaining buffer content
+    if (buffer.trim().startsWith("data: ")) {
+      const data = buffer.trim().slice(6);
+      if (data !== "[DONE]") {
+        try {
+          const parsed = JSON.parse(data) as {
+            choices?: Array<{
+              delta?: { content?: string };
+            }>;
+          };
+          const delta = parsed.choices?.[0]?.delta?.content;
+          if (delta) fullContent += delta;
+        } catch {
+          // skip
+        }
+      }
+    }
+
+    const content = fullContent.trim();
     if (!content) {
       throw new Error("AI response did not include extracted JSON.");
     }
+
 
     let extractedJson: unknown;
     try {
