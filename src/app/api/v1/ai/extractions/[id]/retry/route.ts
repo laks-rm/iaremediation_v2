@@ -6,13 +6,14 @@ import { processExtraction } from "../../../../../../../lib/ai/processExtraction
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     await requireRole(["AuditTeam"]);
+    const { id } = await params;
 
     const extraction = await prisma.ai_extractions.findUnique({
-      where: { id: params.id },
+      where: { id },
       select: {
         id: true,
         status: true,
@@ -31,7 +32,7 @@ export async function POST(
     }
 
     await prisma.ai_extractions.update({
-      where: { id: params.id },
+      where: { id },
       data: {
         status: "Pending",
         rejection_reason: null,
@@ -39,11 +40,11 @@ export async function POST(
       },
     });
 
-    processExtraction(params.id).catch((error) => {
-      console.error(`[retry route] Background extraction retry failed for ${params.id}:`, error);
+    processExtraction(id).catch((error) => {
+      console.error(`[retry route] Background extraction retry failed for ${id}:`, error);
     });
 
-    return NextResponse.json({ extractionId: params.id, status: "Pending" }, { status: 202 });
+    return NextResponse.json({ extractionId: id, status: "Pending" }, { status: 202 });
   } catch (error) {
     if (error instanceof AuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });

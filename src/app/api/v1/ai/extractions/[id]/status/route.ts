@@ -5,13 +5,14 @@ import { prisma } from "../../../../../../../lib/db/prisma";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     await requireRole(["AuditTeam", "Viewer", "Auditee"]);
+    const { id } = await params;
 
     const extraction = await prisma.ai_extractions.findUnique({
-      where: { id: params.id },
+      where: { id },
       select: {
         id: true,
         status: true,
