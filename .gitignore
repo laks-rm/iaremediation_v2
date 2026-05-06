@@ -10,3 +10,4 @@ tsconfig.tsbuildinfo
 .DS_Store
 *.code-workspace
 scripts/data/
+next-env.d.ts
