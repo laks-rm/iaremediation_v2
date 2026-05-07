@@ -31,6 +31,8 @@ export type ActionPlanSummaryData = {
   department?: string | null;
   finding?: {
     title?: string | null;
+    is_standalone?: boolean;
+    audit_type?: AuditType | null;
     audit?: {
       name?: string | null;
       audit_type?: AuditType | null;
@@ -185,12 +187,15 @@ export default function ActionPlanSummary({
   variant?: SummaryVariant;
 }) {
   const audit = actionPlan.finding?.audit ?? null;
+  const isStandalone = actionPlan.finding?.is_standalone ?? false;
+  const auditType = audit?.audit_type ?? actionPlan.finding?.audit_type ?? null;
+  const auditName = audit?.name ?? (isStandalone ? "Standalone / Ad-hoc" : null);
   const owner = actionPlan.action_plan_owners?.[0]?.user;
   const isClosed = CLOSED_STATUSES.includes(actionPlan.status);
   const dueMeta = getDueMeta(actionPlan);
   const priorityColors = actionPlan.priority ? PRIORITY_COLORS[actionPlan.priority] : null;
   const statusColors = STATUS_COLORS[actionPlan.status];
-  const auditColors = audit?.audit_type ? AUDIT_TYPE_COLORS[audit.audit_type] : null;
+  const auditColors = auditType ? AUDIT_TYPE_COLORS[auditType] : null;
   const evidenceCount = actionPlan.evidence_count ?? actionPlan.evidence?.length ?? 0;
   const ownerDepartment =
     owner?.team_l2 ?? owner?.dept_l2 ?? owner?.department ?? actionPlan.department ?? "No department";
@@ -225,10 +230,10 @@ export default function ActionPlanSummary({
         }`}
       >
         {variant === "header-card" ? <span className="action-plan-summary__label">Audit</span> : null}
-        {audit ? (
+        {auditName ? (
           <div className="action-plan-summary__audit-content">
-            <strong title={audit.name ?? undefined}>{audit.name ?? "No audit linked"}</strong>
-            <em>{audit.audit_type ? AUDIT_TYPE_LABELS[audit.audit_type] : "No audit type"}</em>
+            <strong title={auditName}>{auditName}</strong>
+            {auditType ? <em>{AUDIT_TYPE_LABELS[auditType]}</em> : null}
           </div>
         ) : (
           <span className="action-plan-summary__empty">—</span>

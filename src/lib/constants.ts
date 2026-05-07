@@ -44,3 +44,9 @@ export const PRIORITY_COLORS = {
   Moderate: { bg: "bg-amber-100", text: "text-amber-800" },
   Low: { bg: "bg-slate-100", text: "text-slate-800" },
 } satisfies Record<Priority, BadgeColors>;
+
+export const CONTROL_RATING_LABELS: Record<string, string> = {
+  Effective: "Effective",
+  PartiallyEffective: "Partially Effective",
+  NotEffective: "Not Effective",
+};

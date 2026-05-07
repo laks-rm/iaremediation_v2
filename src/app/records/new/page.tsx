@@ -69,6 +69,7 @@ type FindingDraft = {
   priority: Priority;
   control_rating: ControlRating;
   finding_type: FindingType;
+  audit_type: AuditType | null;
   collapsed: boolean;
 };
 
@@ -136,6 +137,11 @@ const CONTROL_RATINGS: ControlRating[] = [
   "PartiallyEffective",
   "NotEffective",
 ];
+const CONTROL_RATING_LABELS: Record<ControlRating, string> = {
+  Effective: "Effective",
+  PartiallyEffective: "Partially Effective",
+  NotEffective: "Not Effective",
+};
 const FINDING_TYPES: FindingType[] = ["Finding", "OpportunityForImprovement"];
 
 const emptyAudit: AuditDraft = {
@@ -163,6 +169,7 @@ function newFindingDraft(): FindingDraft {
     priority: "Moderate",
     control_rating: "PartiallyEffective",
     finding_type: "Finding",
+    audit_type: null,
     collapsed: false,
   };
 }
@@ -225,20 +232,19 @@ function getStepTitle(mode: Mode | null, step: number) {
       "Audit Details",
       "PDF Upload",
       "Findings",
-      "Action Plans",
       "Review",
     ],
-    existingAudit: ["Select Audit", "Action Plans", "Review"],
-    standalone: ["Finding Details", "Action Plans", "Review"],
+    existingAudit: ["Select Audit", "Findings", "Review"],
+    standalone: ["Finding Details", "Review"],
   };
 
   return titles[mode][step - 1] ?? "Choose Mode";
 }
 
 function getTotalSteps(mode: Mode | null) {
-  if (mode === "newAudit") return 5;
+  if (mode === "newAudit") return 4;
   if (mode === "existingAudit") return 3;
-  if (mode === "standalone") return 3;
+  if (mode === "standalone") return 2;
   return 0;
 }
 
@@ -555,11 +561,16 @@ function NewRecordPageContent() {
         ].filter(Boolean);
       }
       if (step === 3) {
-        return findings.some((finding) => !finding.title.trim())
-          ? ["Every finding needs a title"]
-          : [];
+        const findingsValid = findings.every((finding) => finding.title.trim());
+        const plans = Object.values(actionPlansByFinding).flat();
+        return [
+          !findingsValid ? "Every finding needs a title" : "",
+          plans.length === 0 ? "Add at least one action plan" : "",
+          plans.some((plan) => !plan.description.trim()) ? "Every action plan needs a description" : "",
+          plans.some((plan) => !plan.owner_user_id) ? "Every action plan needs an owner" : "",
+        ].filter(Boolean);
       }
-      if (step === 4 || step === 5) {
+      if (step === 4) {
         const plans = Object.values(actionPlansByFinding).flat();
         return [
           plans.length === 0 ? "Add at least one action plan" : "",
@@ -573,12 +584,22 @@ function NewRecordPageContent() {
       if (step === 1) {
         return [
           !selectedAuditId ? "Select an audit" : "",
-          selectedFindingId === "new" && !inlineFinding.title.trim()
-            ? "Enter the new finding title or choose an existing finding"
+        ].filter(Boolean);
+      }
+      if (step === 2) {
+        const findingValid = selectedFindingId !== "new" || inlineFinding.title.trim();
+        return [
+          !findingValid ? "Enter the new finding title or choose an existing finding" : "",
+          flatActionPlans.length === 0 ? "Add at least one action plan" : "",
+          flatActionPlans.some((plan) => !plan.description.trim())
+            ? "Every action plan needs a description"
+            : "",
+          flatActionPlans.some((plan) => !plan.owner_user_id)
+            ? "Every action plan needs an owner"
             : "",
         ].filter(Boolean);
       }
-      if (step === 2 || step === 3) {
+      if (step === 3) {
         return [
           flatActionPlans.length === 0 ? "Add at least one action plan" : "",
           flatActionPlans.some((plan) => !plan.description.trim())
@@ -593,9 +614,18 @@ function NewRecordPageContent() {
 
     if (mode === "standalone") {
       if (step === 1) {
-        return !standaloneFinding.title.trim() ? ["Finding title is required"] : [];
+        return [
+          !standaloneFinding.title.trim() ? "Finding title is required" : "",
+          flatActionPlans.length === 0 ? "Add at least one action plan" : "",
+          flatActionPlans.some((plan) => !plan.description.trim())
+            ? "Every action plan needs a description"
+            : "",
+          flatActionPlans.some((plan) => !plan.owner_user_id)
+            ? "Every action plan needs an owner"
+            : "",
+        ].filter(Boolean);
       }
-      if (step === 2 || step === 3) {
+      if (step === 2) {
         return [
           flatActionPlans.length === 0 ? "Add at least one action plan" : "",
           flatActionPlans.some((plan) => !plan.description.trim())
@@ -703,6 +733,7 @@ function NewRecordPageContent() {
         priority: finding.priority,
         control_rating: finding.control_rating,
         finding_type: finding.finding_type,
+        audit_type: isStandalone ? finding.audit_type : null,
         created_via: isStandalone ? "Standalone" : "Manual",
       }),
     });
@@ -923,13 +954,13 @@ function NewRecordPageContent() {
               {step === 0 ? renderModeSelection() : null}
               {mode === "newAudit" && step === 1 ? renderAuditDetails() : null}
               {mode === "newAudit" && step === 2 ? renderPdfUpload() : null}
-              {mode === "newAudit" && step === 3 ? renderFindings() : null}
-              {mode === "newAudit" && step === 4 ? renderGroupedActionPlans() : null}
-              {mode === "newAudit" && step === 5 ? renderReview() : null}
+              {mode === "newAudit" && step === 3 ? renderFindingsWithActionPlans() : null}
+              {mode === "newAudit" && step === 4 ? renderReview() : null}
               {mode === "existingAudit" && step === 1 ? renderExistingAuditSelection() : null}
-              {mode === "existingAudit" && step === 2 ? renderFlatActionPlans() : null}
+              {mode === "existingAudit" && step === 2 ? renderExistingAuditFindingWithActionPlans() : null}
               {mode === "existingAudit" && step === 3 ? renderReview() : null}
               {mode === "standalone" && step === 1 ? renderStandaloneSinglePage() : null}
+              {mode === "standalone" && step === 2 ? renderReview() : null}
             </section>
           ) : null}
 
@@ -954,19 +985,22 @@ function NewRecordPageContent() {
             </nav>
           ) : null}
 
-          {mode === "standalone" && step === 1 ? (
+          {mode === "standalone" && step > 0 ? (
             <nav className="records-nav">
               <button className="button" disabled={isSubmitting} onClick={goBack} type="button">
                 Back
               </button>
+              <span>
+                Step {step} of {totalSteps} — {stepTitle}
+              </span>
               <span title={missing.join(", ")}>
                 <button
                   className="button button--primary"
                   disabled={missing.length > 0 || isSubmitting}
-                  onClick={submitRecords}
+                  onClick={isReview ? submitRecords : goNext}
                   type="button"
                 >
-                  {isSubmitting ? "Creating..." : "Save"}
+                  {isSubmitting ? "Creating..." : isReview ? "Create Records" : "Next"}
                 </button>
               </span>
             </nav>
@@ -1203,7 +1237,83 @@ function NewRecordPageContent() {
     );
   }
 
-  function renderFindingFields(finding: FindingDraft, onChange: (patch: Partial<FindingDraft>) => void) {
+  function renderFindingsWithActionPlans() {
+    return (
+      <>
+        <header className="records-heading">
+          <p>Findings</p>
+          <h1>Add findings and action plans</h1>
+        </header>
+        <div className="records-stack">
+          {findings.map((finding, index) => (
+            <article className="records-card" key={finding.id}>
+              <header className="records-card__header">
+                <strong>F{index + 1} {finding.title || "Untitled"}</strong>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className="button"
+                    onClick={() => updateFinding(finding.id, { collapsed: !finding.collapsed })}
+                    type="button"
+                  >
+                    {finding.collapsed ? "Expand" : "Collapse"}
+                  </button>
+                  <button
+                    className="button button--danger"
+                    disabled={findings.length === 1}
+                    onClick={() => setFindings((current) => current.filter((item) => item.id !== finding.id))}
+                    type="button"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </header>
+              {!finding.collapsed ? (
+                <>
+                  {renderFindingFields(finding, (patch) => updateFinding(finding.id, patch))}
+                  <div style={{ borderTop: "1px solid #e2e8f0", marginTop: 20, paddingTop: 20 }}>
+                    <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Action Plans</h3>
+                    <div className="records-stack">
+                      {(actionPlansByFinding[finding.id] ?? []).map((actionPlan) => (
+                        <ActionPlanCard
+                          actionPlan={actionPlan}
+                          aiError={aiErrors[actionPlan.id]}
+                          aiLoading={aiLoadingId === actionPlan.id}
+                          entities={options.entities.filter((entity) => audit.entity_ids.includes(entity.id))}
+                          followUpAuditors={options.follow_up_auditors}
+                          key={actionPlan.id}
+                          users={options.users}
+                          onGenerate={() => generateEvidence(actionPlan, finding)}
+                          onRemove={() => removeActionPlan(actionPlan.id, finding.id)}
+                          onUpdate={(patch) => updateActionPlan(actionPlan.id, patch, finding.id)}
+                        />
+                      ))}
+                      <button
+                        className="button"
+                        onClick={() => addActionPlan(finding.id)}
+                        type="button"
+                        style={{ alignSelf: "flex-start", background: "transparent", border: "1px dashed #cbd5e1", color: "#475569" }}
+                      >
+                        + Add another action plan
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : null}
+            </article>
+          ))}
+          <button
+            className="button button--primary"
+            onClick={() => setFindings((current) => [...current, newFindingDraft()])}
+            type="button"
+          >
+            Add Finding
+          </button>
+        </div>
+      </>
+    );
+  }
+
+  function renderFindingFields(finding: FindingDraft, onChange: (patch: Partial<FindingDraft>) => void, isStandalone: boolean = false) {
     return (
       <div className="records-form-grid">
         <Field label="Title">
@@ -1218,6 +1328,25 @@ function NewRecordPageContent() {
             onChange={(finding_type) => onChange({ finding_type })}
           />
         </div>
+        {isStandalone ? (
+          <div className="record-field record-field--wide">
+            <span>Audit Type</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <select
+                value={finding.audit_type ?? ""}
+                onChange={(event) => onChange({ audit_type: event.target.value as AuditType | null })}
+                style={{ flex: 1 }}
+              >
+                <option value="">Optional</option>
+                {AUDIT_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {AUDIT_TYPE_LABELS[type]}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        ) : null}
         <Field label="External reference">
           <input value={finding.external_ref} onChange={(event) => onChange({ external_ref: event.target.value })} />
         </Field>
@@ -1228,6 +1357,7 @@ function NewRecordPageContent() {
         <div className="record-field record-field--wide">
           <span>Control rating</span>
           <Segmented
+            labels={CONTROL_RATING_LABELS}
             options={CONTROL_RATINGS}
             value={finding.control_rating}
             onChange={(control_rating) => onChange({ control_rating })}
@@ -1258,8 +1388,13 @@ function NewRecordPageContent() {
             <section className="records-card" key={finding.id}>
               <header className="records-section-header">
                 <strong>F{index + 1}: {finding.title || "Untitled finding"}</strong>
-                <button className="button" onClick={() => addActionPlan(finding.id)} type="button">
-                  Add Action Plan
+                <button
+                  className="button"
+                  onClick={() => addActionPlan(finding.id)}
+                  type="button"
+                  style={{ background: "transparent", border: "1px dashed #cbd5e1", color: "#475569" }}
+                >
+                  + Add another action plan
                 </button>
               </header>
               {(actionPlansByFinding[finding.id] ?? []).map((actionPlan) => (
@@ -1288,7 +1423,7 @@ function NewRecordPageContent() {
       <>
         <header className="records-heading">
           <p>Select audit</p>
-          <h1>Choose the audit and finding</h1>
+          <h1>Choose the audit</h1>
         </header>
         <Field label="Search audits">
           <input
@@ -1314,50 +1449,75 @@ function NewRecordPageContent() {
             </button>
           ))}
         </div>
-        {selectedAudit ? (
-          <section className="records-card">
-            <h2>Finding</h2>
-            <div className="records-radio-list">
-              {auditFindings.map((finding) => (
-                <label key={finding.id}>
-                  <input
-                    checked={selectedFindingId === finding.id}
-                    onChange={() => setSelectedFindingId(finding.id)}
-                    type="radio"
-                  />
-                  <span>{finding.title}</span>
-                </label>
-              ))}
-              <label>
-                <input
-                  checked={selectedFindingId === "new"}
-                  onChange={() => setSelectedFindingId("new")}
-                  type="radio"
-                />
-                <span>Create new finding</span>
-              </label>
-            </div>
-            {selectedFindingId === "new"
-              ? renderFindingFields(inlineFinding, (patch) => setInlineFinding({ ...inlineFinding, ...patch }))
-              : null}
-          </section>
-        ) : null}
       </>
     );
   }
 
-  function renderStandaloneFinding() {
+  function renderExistingAuditFindingWithActionPlans() {
+    const entities = selectedAuditEntities;
+    const finding =
+      selectedFindingId === "new"
+        ? inlineFinding
+        : auditFindings.find((item) => item.id === selectedFindingId) ?? inlineFinding;
+
     return (
       <>
         <header className="records-heading">
-          <p>Standalone finding</p>
-          <h1>Create a finding outside an audit report</h1>
-          <span>This finding is not linked to an audit report. It can still have owners and evidence requirements.</span>
+          <p>Finding &amp; Action Plans</p>
+          <h1>Select or create a finding, then add action plans</h1>
         </header>
         <section className="records-card">
-          {renderFindingFields(standaloneFinding, (patch) =>
-            setStandaloneFinding({ ...standaloneFinding, ...patch }),
-          )}
+          <h2>Finding</h2>
+          <div className="records-radio-list">
+            {auditFindings.map((findingOption) => (
+              <label key={findingOption.id}>
+                <input
+                  checked={selectedFindingId === findingOption.id}
+                  onChange={() => setSelectedFindingId(findingOption.id)}
+                  type="radio"
+                />
+                <span>{findingOption.title}</span>
+              </label>
+            ))}
+            <label>
+              <input
+                checked={selectedFindingId === "new"}
+                onChange={() => setSelectedFindingId("new")}
+                type="radio"
+              />
+              <span>Create new finding</span>
+            </label>
+          </div>
+          {selectedFindingId === "new"
+            ? renderFindingFields(inlineFinding, (patch) => setInlineFinding({ ...inlineFinding, ...patch }))
+            : null}
+        </section>
+        <section className="records-card" style={{ marginTop: 24 }}>
+          <h2>Action Plans</h2>
+          <div className="records-stack">
+            {flatActionPlans.map((actionPlan) => (
+              <ActionPlanCard
+                actionPlan={actionPlan}
+                aiError={aiErrors[actionPlan.id]}
+                aiLoading={aiLoadingId === actionPlan.id}
+                entities={entities}
+                followUpAuditors={options.follow_up_auditors}
+                key={actionPlan.id}
+                users={options.users}
+                onGenerate={() => generateEvidence(actionPlan, finding)}
+                onRemove={() => removeActionPlan(actionPlan.id)}
+                onUpdate={(patch) => updateActionPlan(actionPlan.id, patch)}
+              />
+            ))}
+            <button
+              className="button"
+              onClick={() => addActionPlan()}
+              type="button"
+              style={{ alignSelf: "flex-start", background: "transparent", border: "1px dashed #cbd5e1", color: "#475569" }}
+            >
+              + Add another action plan
+            </button>
+          </div>
         </section>
       </>
     );
@@ -1374,28 +1534,33 @@ function NewRecordPageContent() {
           <h2>Finding Details</h2>
           {renderFindingFields(standaloneFinding, (patch) =>
             setStandaloneFinding({ ...standaloneFinding, ...patch }),
-          )}
-        </section>
-        <section className="records-card" style={{ marginTop: 24 }}>
-          <h2>Action Plans</h2>
-          <div className="records-stack">
-            {flatActionPlans.map((actionPlan) => (
-              <ActionPlanCard
-                actionPlan={actionPlan}
-                aiError={aiErrors[actionPlan.id]}
-                aiLoading={aiLoadingId === actionPlan.id}
-                entities={options.entities}
-                followUpAuditors={options.follow_up_auditors}
-                key={actionPlan.id}
-                users={options.users}
-                onGenerate={() => generateEvidence(actionPlan, standaloneFinding)}
-                onRemove={() => removeActionPlan(actionPlan.id)}
-                onUpdate={(patch) => updateActionPlan(actionPlan.id, patch)}
-              />
-            ))}
-            <button className="button button--primary" onClick={() => addActionPlan()} type="button">
-              + Add another action plan
-            </button>
+          true)}
+          <div style={{ borderTop: "1px solid #e2e8f0", marginTop: 20, paddingTop: 20 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Action Plans</h3>
+            <div className="records-stack">
+              {flatActionPlans.map((actionPlan) => (
+                <ActionPlanCard
+                  actionPlan={actionPlan}
+                  aiError={aiErrors[actionPlan.id]}
+                  aiLoading={aiLoadingId === actionPlan.id}
+                  entities={options.entities}
+                  followUpAuditors={options.follow_up_auditors}
+                  key={actionPlan.id}
+                  users={options.users}
+                  onGenerate={() => generateEvidence(actionPlan, standaloneFinding)}
+                  onRemove={() => removeActionPlan(actionPlan.id)}
+                  onUpdate={(patch) => updateActionPlan(actionPlan.id, patch)}
+                />
+              ))}
+              <button
+                className="button"
+                onClick={() => addActionPlan()}
+                type="button"
+                style={{ alignSelf: "flex-start", background: "transparent", border: "1px dashed #cbd5e1", color: "#475569" }}
+              >
+                + Add another action plan
+              </button>
+            </div>
           </div>
         </section>
         {submitProgress.length > 0 ? (
@@ -1439,7 +1604,12 @@ function NewRecordPageContent() {
               onUpdate={(patch) => updateActionPlan(actionPlan.id, patch)}
             />
           ))}
-          <button className="button button--primary" onClick={() => addActionPlan()} type="button">
+          <button
+            className="button"
+            onClick={() => addActionPlan()}
+            type="button"
+            style={{ alignSelf: "flex-start", background: "transparent", border: "1px dashed #cbd5e1", color: "#475569" }}
+          >
             + Add another action plan
           </button>
         </div>

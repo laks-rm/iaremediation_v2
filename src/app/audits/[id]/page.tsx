@@ -9,7 +9,7 @@ import AppLayout from "../../../components/AppLayout";
 import ConfirmDialog from "../../../components/ConfirmDialog";
 import EmptyState from "../../../components/EmptyState";
 import { useToast } from "../../../components/Toast";
-import { AUDIT_TYPE_LABELS, STATUS_LABELS } from "../../../lib/constants";
+import { AUDIT_TYPE_LABELS, CONTROL_RATING_LABELS, STATUS_LABELS } from "../../../lib/constants";
 
 type Role = "AuditTeam" | "Viewer" | "Auditee" | "Pending";
 type AuditType = keyof typeof AUDIT_TYPE_LABELS;
@@ -447,9 +447,9 @@ export default function AuditDetailPage() {
                 <h2>Control Areas</h2>
               </header>
               <div className="audit-control-counts">
-                <span>{controlCounts.Effective} Effective</span>
-                <span>{controlCounts.PartiallyEffective} Partially Effective</span>
-                <span>{controlCounts.NotEffective} Not Effective</span>
+                <span>{controlCounts.Effective} {CONTROL_RATING_LABELS.Effective}</span>
+                <span>{controlCounts.PartiallyEffective} {CONTROL_RATING_LABELS.PartiallyEffective}</span>
+                <span>{controlCounts.NotEffective} {CONTROL_RATING_LABELS.NotEffective}</span>
               </div>
               <div className="audit-control-table">
                 <div>

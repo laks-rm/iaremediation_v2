@@ -17,6 +17,7 @@ const createFindingSchema = z.object({
   priority: z.enum(["High", "Moderate", "Low"]).nullable().optional(),
   control_rating: z.enum(["Effective", "PartiallyEffective", "NotEffective"]).nullable().optional(),
   finding_type: z.enum(["Finding", "OpportunityForImprovement"]).optional(),
+  audit_type: z.enum(["IT", "RegulatoryIT", "Operations", "RegulatoryOperations", "External"]).nullable().optional(),
   created_via: z.enum(["Manual", "Standalone"]),
 });
 
@@ -132,6 +133,7 @@ export async function POST(request: NextRequest) {
         priority: parsed.data.priority as Priority | null | undefined,
         control_rating: parsed.data.control_rating as ControlRating | null | undefined,
         finding_type: parsed.data.finding_type ?? "Finding",
+        audit_type: parsed.data.is_standalone ? parsed.data.audit_type : null,
         display_order: displayOrder,
         created_by_id: currentUser.id,
         created_via: parsed.data.created_via as CreatedVia,

@@ -820,6 +820,7 @@ export default function ActionPlanTable({
         <input
           aria-label="Search action plans"
           placeholder="Search action plans, findings, owners, audits..."
+          style={{ flex: "1 1 180px", minWidth: "160px" }}
           value={filters.q}
           onChange={(event) => setFilter("q", event.target.value)}
         />
@@ -1088,7 +1089,7 @@ function ActionPlanRows({
     status: "Status",
     priority: "Priority",
     due_bucket: "Due",
-    evidence: "Evid",
+    evidence: "Evidence",
   };
   const selectedCounts: Record<FilterColumn, number> = {
     created_via: splitFilterValues(filters.created_via).length,
@@ -1146,12 +1147,14 @@ function ActionPlanRows({
       hasActiveFilter ? "dashboard-column-filter--active" : "",
       isSorted ? "dashboard-column-filter--sorted" : "",
     ].filter(Boolean).join(" ");
+    const tooltipText = column === "evidence" ? "Number of evidence files uploaded for this action plan" : undefined;
 
     return (
       <span className={className}>
         <button
           className="dashboard-column-filter__label"
           onClick={() => cycleSort(columnSortBy)}
+          title={tooltipText}
           type="button"
         >
           <span>{filterLabels[column]}</span>

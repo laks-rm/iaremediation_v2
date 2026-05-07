@@ -86,7 +86,6 @@ export default function AuditsPage() {
   const [search, setSearch] = useState("");
   const [auditType, setAuditType] = useState("");
   const [entityId, setEntityId] = useState("");
-  const [opinionRating, setOpinionRating] = useState("");
   const [year, setYear] = useState("");
   const [myAudits, setMyAudits] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -164,17 +163,16 @@ export default function AuditsPage() {
       const matchesType = !auditType || audit.audit_type === auditType;
       const matchesEntity =
         !entityId || audit.audit_entities.some(({ entity }) => entity.id === entityId);
-      const matchesOpinion = !opinionRating || audit.opinion_rating === opinionRating;
       const matchesYear =
         !year ||
         (audit.report_issue_date &&
           String(new Date(audit.report_issue_date).getFullYear()) === year);
 
-      return matchesSearch && matchesType && matchesEntity && matchesOpinion && matchesYear;
+      return matchesSearch && matchesType && matchesEntity && matchesYear;
     });
 
     return filtered;
-  }, [auditType, audits, entityId, opinionRating, search, year]);
+  }, [auditType, audits, entityId, search, year]);
 
   function handleExport() {
     try {
@@ -183,7 +181,6 @@ export default function AuditsPage() {
       if (search.trim()) params.set("search", search.trim());
       if (auditType) params.set("audit_type", auditType);
       if (entityId) params.set("entity_id", entityId);
-      if (opinionRating) params.set("opinion_rating", opinionRating);
       if (year) params.set("year", year);
 
       const query = params.toString();
@@ -226,17 +223,10 @@ export default function AuditsPage() {
           <input
             aria-label="Search audits"
             placeholder="Search name or reference number"
+            style={{ flex: "1 1 180px", minWidth: "160px" }}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
-          <label>
-            <input
-              checked={myAudits}
-              onChange={(event) => setMyAudits(event.target.checked)}
-              type="checkbox"
-            />
-            My audits
-          </label>
           <select value={auditType} onChange={(event) => setAuditType(event.target.value)}>
             <option value="">All audit types</option>
             {AUDIT_TYPES.map((type) => (
@@ -253,14 +243,6 @@ export default function AuditsPage() {
               </option>
             ))}
           </select>
-          <select value={opinionRating} onChange={(event) => setOpinionRating(event.target.value)}>
-            <option value="">All opinions</option>
-            {OPINION_RATINGS.map((rating) => (
-              <option key={rating} value={rating}>
-                {rating}
-              </option>
-            ))}
-          </select>
           <select value={year} onChange={(event) => setYear(event.target.value)}>
             <option value="">All years</option>
             {years.map((item) => (
@@ -269,6 +251,14 @@ export default function AuditsPage() {
               </option>
             ))}
           </select>
+          <label>
+            <input
+              checked={myAudits}
+              onChange={(event) => setMyAudits(event.target.checked)}
+              type="checkbox"
+            />
+            My audits
+          </label>
         </section>
 
         <section className="audits-table-card">

@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 
 import AppLayout from "../../../../components/AppLayout";
 import EntityMultiSelect from "../../../../components/EntityMultiSelect";
+import { CONTROL_RATING_LABELS } from "../../../../lib/constants";
 
 type Status = "Pending" | "Approved" | "Rejected";
 type AuditType = "IT" | "RegulatoryIT" | "Operations" | "RegulatoryOperations" | "External";
@@ -867,6 +868,7 @@ export default function ExtractionReviewPage() {
                   <div key={index}>
                     <input value={area.title ?? ""} onChange={(event) => updateControlArea(index, { title: event.target.value })} />
                     <Segmented
+                      labels={CONTROL_RATING_LABELS}
                       options={CONTROL_RATINGS}
                       value={area.control_rating ?? area.rating ?? "PartiallyEffective"}
                       onChange={(rating) => updateControlArea(index, { rating })}
@@ -958,6 +960,7 @@ export default function ExtractionReviewPage() {
                             <div className="record-field record-field--wide">
                               <span>Control rating</span>
                               <Segmented
+                                labels={CONTROL_RATING_LABELS}
                                 options={CONTROL_RATINGS}
                                 value={finding.control_rating ?? "PartiallyEffective"}
                                 onChange={(control_rating) => updateFinding(findingIndex, { control_rating })}
@@ -1124,10 +1127,12 @@ function ReviewField({ label, children }: { label: string; children: ReactNode }
 function Segmented<T extends string>({
   options,
   value,
+  labels,
   onChange,
 }: {
   options: T[];
   value: T;
+  labels?: Partial<Record<T, string>>;
   onChange: (value: T) => void;
 }) {
   return (
@@ -1139,7 +1144,7 @@ function Segmented<T extends string>({
           onClick={() => onChange(option)}
           type="button"
         >
-          {option}
+          {labels?.[option] ?? option}
         </button>
       ))}
     </div>

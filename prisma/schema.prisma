@@ -187,6 +187,7 @@ model findings {
   priority         Priority?
   control_rating   ControlRating?
   finding_type     FindingType    @default(Finding)
+  audit_type       AuditType?
   display_order    Int            @default(1)
   is_deleted       Boolean        @default(false)
   created_by_id    String         @db.Uuid
