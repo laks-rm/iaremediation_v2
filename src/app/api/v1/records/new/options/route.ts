@@ -49,6 +49,7 @@ export async function GET() {
       entities,
       users,
       follow_up_auditors: users.filter((user) => user.is_internal_auditor),
+      finding_types: ["Finding", "OpportunityForImprovement"],
     });
   } catch (error) {
     if (error instanceof AuthError) {

@@ -16,6 +16,7 @@ const createFindingSchema = z.object({
   recommendation: z.string().trim().nullable().optional(),
   priority: z.enum(["High", "Moderate", "Low"]).nullable().optional(),
   control_rating: z.enum(["Effective", "PartiallyEffective", "NotEffective"]).nullable().optional(),
+  finding_type: z.enum(["Finding", "OpportunityForImprovement"]).optional(),
   created_via: z.enum(["Manual", "Standalone"]),
 });
 
@@ -58,6 +59,7 @@ export async function GET(request: NextRequest) {
         recommendation: true,
         priority: true,
         control_rating: true,
+        finding_type: true,
       },
       orderBy: [
         {
@@ -129,6 +131,7 @@ export async function POST(request: NextRequest) {
         recommendation: nullableString(parsed.data.recommendation),
         priority: parsed.data.priority as Priority | null | undefined,
         control_rating: parsed.data.control_rating as ControlRating | null | undefined,
+        finding_type: parsed.data.finding_type ?? "Finding",
         display_order: displayOrder,
         created_by_id: currentUser.id,
         created_via: parsed.data.created_via as CreatedVia,

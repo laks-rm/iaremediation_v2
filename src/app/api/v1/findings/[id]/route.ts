@@ -14,6 +14,7 @@ const updateFindingSchema = z.object({
   recommendation: z.string().trim().nullable().optional(),
   priority: z.enum(["High", "Moderate", "Low"]).nullable().optional(),
   control_rating: z.enum(["Effective", "PartiallyEffective", "NotEffective"]).nullable().optional(),
+  finding_type: z.enum(["Finding", "OpportunityForImprovement"]).optional(),
 });
 
 type RouteContext = {
@@ -67,6 +68,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (parsed.data.control_rating !== undefined) {
       data.control_rating = parsed.data.control_rating as ControlRating | null;
     }
+    if (parsed.data.finding_type !== undefined) data.finding_type = parsed.data.finding_type;
 
     const finding = await prisma.findings.update({
       where: {

@@ -16,6 +16,7 @@ type ControlRating = "Effective" | "PartiallyEffective" | "NotEffective";
 type AuditType = keyof typeof AUDIT_TYPE_LABELS;
 type OpinionRating = "Satisfactory" | "NeedsImprovement" | "Unsatisfactory";
 type CreatedVia = "Manual" | "Standalone";
+type FindingType = "Finding" | "OpportunityForImprovement";
 
 type EntityOption = {
   id: string;
@@ -55,6 +56,7 @@ type FindingOption = {
   recommendation: string | null;
   priority: Priority | null;
   control_rating: ControlRating | null;
+  finding_type?: FindingType | null;
 };
 
 type FindingDraft = {
@@ -66,6 +68,7 @@ type FindingDraft = {
   recommendation: string;
   priority: Priority;
   control_rating: ControlRating;
+  finding_type: FindingType;
   collapsed: boolean;
 };
 
@@ -133,6 +136,7 @@ const CONTROL_RATINGS: ControlRating[] = [
   "PartiallyEffective",
   "NotEffective",
 ];
+const FINDING_TYPES: FindingType[] = ["Finding", "OpportunityForImprovement"];
 
 const emptyAudit: AuditDraft = {
   name: "",
@@ -158,6 +162,7 @@ function newFindingDraft(): FindingDraft {
     recommendation: "",
     priority: "Moderate",
     control_rating: "PartiallyEffective",
+    finding_type: "Finding",
     collapsed: false,
   };
 }
@@ -697,6 +702,7 @@ function NewRecordPageContent() {
         recommendation: finding.recommendation,
         priority: finding.priority,
         control_rating: finding.control_rating,
+        finding_type: finding.finding_type,
         created_via: isStandalone ? "Standalone" : "Manual",
       }),
     });
@@ -1203,6 +1209,15 @@ function NewRecordPageContent() {
         <Field label="Title">
           <input value={finding.title} onChange={(event) => onChange({ title: event.target.value })} />
         </Field>
+        <div className="record-field record-field--wide">
+          <span>Finding Type</span>
+          <Segmented
+            labels={{ Finding: "Finding", OpportunityForImprovement: "OFI" }}
+            options={FINDING_TYPES}
+            value={finding.finding_type}
+            onChange={(finding_type) => onChange({ finding_type })}
+          />
+        </div>
         <Field label="External reference">
           <input value={finding.external_ref} onChange={(event) => onChange({ external_ref: event.target.value })} />
         </Field>

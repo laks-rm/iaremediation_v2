@@ -15,6 +15,7 @@ export type ExtractedActionPlan = {
 };
 
 export type ExtractedFinding = {
+  finding_type?: "Finding" | "OpportunityForImprovement" | null;
   external_ref?: string | null;
   title?: string | null;
   description?: string | null;

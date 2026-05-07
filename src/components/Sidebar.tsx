@@ -45,6 +45,7 @@ const SIDEBAR_STORAGE_KEY = "ia-sidebar";
 const MAIN_ITEMS: NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: "⌂" },
   { label: "Insights", href: "/insights", icon: "◌" },
+  { label: "KPI", href: "/kpi/closure", icon: "◈" },
   { label: "Audits", href: "/audits", icon: "◫" },
   { label: "Action Plans", href: "/action-plans", icon: "✓" },
 ];

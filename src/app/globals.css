@@ -3550,6 +3550,16 @@ html.dark .activity-action-chip--purple { background: #581c87; color: #e9d5ff; }
   height: 280px;
 }
 
+.closure-kpi-charts-wrap {
+  align-items: stretch;
+}
+
+@media (max-width: 1120px) {
+  .closure-kpi-charts__row {
+    grid-template-columns: 1fr !important;
+  }
+}
+
 .insights-section-header {
   display: flex;
   gap: 12px;
@@ -4165,10 +4175,16 @@ html.dark .activity-action-chip--purple { background: #581c87; color: #e9d5ff; }
 .closure-table__head,
 .closure-table__row {
   display: grid;
-  grid-template-columns: minmax(220px, 1.7fr) 90px 90px 110px minmax(160px, 1fr) 52px;
+  grid-template-columns: minmax(220px, 1.7fr) 90px 88px 88px 88px 72px minmax(140px, 1fr) 52px;
   gap: 12px;
   align-items: center;
-  min-width: 820px;
+  min-width: 920px;
+}
+
+.closure-table.closure-table--kpi .closure-table__head,
+.closure-table.closure-table--kpi .closure-table__row {
+  grid-template-columns: minmax(160px, 1.3fr) 88px 88px 88px 72px minmax(100px, 1fr) 52px;
+  min-width: 900px;
 }
 
 .closure-table__head {

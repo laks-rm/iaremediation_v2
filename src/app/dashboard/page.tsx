@@ -13,7 +13,7 @@ import { CLOSURE_RATE_THRESHOLDS } from "../../lib/kpi/closure";
 type DashboardData = DashboardChartsData;
 type DashboardTab = "overview" | "closure";
 type ClosureDimension = "audit_type" | "audit_name" | "follow_up_auditor" | "department";
-type QuickPick = "week" | "month" | "quarter" | "year" | "today";
+type QuickPick = "week" | "month" | "quarter" | "year" | "alltime";
 
 type DashboardUser = {
   id: string;
@@ -27,18 +27,32 @@ type ClosurePeriodState =
   | { type: "range"; from: string; to: string };
 
 type ClosureKpiResult = {
+  due_in_period: number;
+  overdue_brought_forward: number;
   due: number;
   closed: number;
-  rate: number | null;
+  closure_rate: number | null;
+  overdue_at_period_end: number;
+  overdue_created_in_period: number;
+  net_movement: number;
+  reschedule_rate: number | null;
 };
 
 type ClosureKpiRow = {
   dimension: string;
+  due_in_period: number;
+  overdue_brought_forward: number;
   due: number;
   closed: number;
-  rate: number | null;
-  actionPlanIds: string[];
-  closedIds: string[];
+  closure_rate: number | null;
+  overdue_at_period_end: number;
+  overdue_created_in_period: number;
+  net_movement: number;
+  reschedule_rate: number | null;
+  due_in_period_ids: string[];
+  overdue_brought_forward_ids: string[];
+  closed_ids: string[];
+  overdue_at_period_end_ids: string[];
 };
 
 type ClosureKpiResponse = {
@@ -57,7 +71,7 @@ const QUICK_PICKS: { id: QuickPick; label: string }[] = [
   { id: "month", label: "This month" },
   { id: "quarter", label: "This quarter" },
   { id: "year", label: "This year" },
-  { id: "today", label: "As on today" },
+  { id: "alltime", label: "All time" },
 ];
 
 const emptyData: DashboardData = {
@@ -143,10 +157,6 @@ function getQuickPickPeriod(quickPick: QuickPick): ClosurePeriodState {
   const today = parseDateInput(getTodayInputValue()) ?? new Date();
   const todayValue = formatDateInput(today);
 
-  if (quickPick === "today") {
-    return { type: "as_on", date: todayValue };
-  }
-
   if (quickPick === "week") {
     return { type: "range", from: formatDateInput(startOfWeek(today)), to: todayValue };
   }
@@ -164,6 +174,14 @@ function getQuickPickPeriod(quickPick: QuickPick): ClosurePeriodState {
     return {
       type: "range",
       from: formatDateInput(new Date(Date.UTC(today.getUTCFullYear(), quarterStartMonth, 1))),
+      to: todayValue,
+    };
+  }
+
+  if (quickPick === "alltime") {
+    return {
+      type: "range",
+      from: "2020-01-01",
       to: todayValue,
     };
   }
@@ -193,11 +211,11 @@ function getClosurePeriodFromParams(searchParams: URLSearchParams): ClosurePerio
     }
   }
 
-  return getQuickPickPeriod("today");
+  return getQuickPickPeriod("month");
 }
 
-function getActiveQuickPick(period: ClosurePeriodState, customDate: string) {
-  if (customDate) {
+function getActiveQuickPick(period: ClosurePeriodState, hasCustomDates: boolean) {
+  if (hasCustomDates) {
     return null;
   }
 
@@ -209,9 +227,9 @@ function getActiveQuickPick(period: ClosurePeriodState, customDate: string) {
 
 function buildClosureApiQuery(period: ClosurePeriodState) {
   const params = new URLSearchParams();
-  params.set("period_type", period.type);
   if (period.type === "as_on") {
-    params.set("date", period.date);
+    params.set("from", period.date);
+    params.set("to", period.date);
   } else {
     params.set("from", period.from);
     params.set("to", period.to);
@@ -229,6 +247,54 @@ function getRateColour(rate: number | null) {
 
 function formatRate(rate: number | null) {
   return rate === null ? "—" : `${rate.toFixed(1)}%`;
+}
+
+function formatPeriodLabel(period: ClosurePeriodState, activeQuickPick: QuickPick | null): string {
+  const formatDisplay = (dateStr: string) => {
+    const date = parseDateInput(dateStr);
+    if (!date) return dateStr;
+    return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric" }).format(date);
+  };
+
+  if (period.type === "range") {
+    const fromDisplay = formatDisplay(period.from);
+    const toDisplay = formatDisplay(period.to);
+
+    if (activeQuickPick === "alltime") {
+      return `Showing: All time (${fromDisplay} – ${toDisplay})`;
+    }
+
+    if (activeQuickPick === "month") {
+      const date = parseDateInput(period.from);
+      if (date) {
+        const monthYear = new Intl.DateTimeFormat("en", { month: "long", year: "numeric" }).format(date);
+        return `Showing: This month (${monthYear})`;
+      }
+    }
+
+    if (activeQuickPick === "quarter") {
+      const date = parseDateInput(period.from);
+      if (date) {
+        const quarter = Math.floor(date.getUTCMonth() / 3) + 1;
+        return `Showing: Q${quarter} ${date.getUTCFullYear()}`;
+      }
+    }
+
+    if (activeQuickPick === "year") {
+      const date = parseDateInput(period.from);
+      if (date) {
+        return `Showing: This year (${date.getUTCFullYear()})`;
+      }
+    }
+
+    if (activeQuickPick === "week") {
+      return `Showing: This week`;
+    }
+
+    return `Showing: ${fromDisplay} – ${toDisplay}`;
+  }
+
+  return `Showing: ${formatDisplay(period.date)}`;
 }
 
 function ClosureKpiCard({
@@ -258,7 +324,7 @@ function ClosureTableSkeleton() {
     <div className="closure-table__body">
       {Array.from({ length: 3 }, (_item, index) => (
         <div className="closure-table__row closure-table__row--skeleton" key={index}>
-          {Array.from({ length: 6 }, (_cell, cellIndex) => (
+          {Array.from({ length: 8 }, (_cell, cellIndex) => (
             <span key={cellIndex} />
           ))}
         </div>
@@ -298,7 +364,9 @@ function ClosureBreakdownTable({
         <div className="closure-table">
           <div className="closure-table__head">
             <span>Name</span>
-            <span>Due</span>
+            <span>Due in period</span>
+            <span>Overdue BF</span>
+            <span>Due total</span>
             <span>Closed</span>
             <span>Rate</span>
             <span>Bar</span>
@@ -308,7 +376,7 @@ function ClosureBreakdownTable({
             {rows.map((row) => {
               const drillKey = `${dimension}:${row.dimension}`;
               const isDrilling = activeDrillDown === drillKey;
-              const rateColour = getRateColour(row.rate);
+              const rateColour = getRateColour(row.closure_rate);
 
               return (
                 <button
@@ -320,11 +388,13 @@ function ClosureBreakdownTable({
                   type="button"
                 >
                   <span>{row.dimension}</span>
+                  <span>{row.due_in_period}</span>
+                  <span>{row.overdue_brought_forward}</span>
                   <span>{row.due}</span>
                   <span>{row.closed}</span>
-                  <span style={{ color: rateColour }}>{formatRate(row.rate)}</span>
+                  <span style={{ color: rateColour }}>{formatRate(row.closure_rate)}</span>
                   <span className="closure-rate-bar" aria-hidden="true">
-                    <i style={{ background: rateColour, width: `${row.rate ?? 0}%` }} />
+                    <i style={{ background: rateColour, width: `${row.closure_rate ?? 0}%` }} />
                   </span>
                   <span className="closure-drill">{isDrilling ? <i className="closure-spinner" /> : "→"}</span>
                 </button>
@@ -353,14 +423,13 @@ function DashboardPageContent() {
   const [closurePeriod, setClosurePeriod] = useState<ClosurePeriodState>(() =>
     getClosurePeriodFromParams(new URLSearchParams(searchParams.toString())),
   );
-  const [customClosureDate, setCustomClosureDate] = useState(
-    searchParams.get("kpi_period_type") === "as_on" && searchParams.get("kpi_date")
-      ? searchParams.get("kpi_date") ?? ""
-      : "",
-  );
-  const [closureOpened, setClosureOpened] = useState(activeTab === "closure");
+  const [customFromDate, setCustomFromDate] = useState("");
+  const [customToDate, setCustomToDate] = useState("");
+  const [hasCustomDates, setHasCustomDates] = useState(false);
+  const [closureOpened, setClosureOpened] = useState(false);
   const [closureLoading, setClosureLoading] = useState(false);
   const [activeDrillDown, setActiveDrillDown] = useState<string | null>(null);
+  const [includeOfi, setIncludeOfi] = useState(false);
 
   const fetchDashboard = useCallback(async () => {
     setIsLoading(true);
@@ -420,7 +489,8 @@ function DashboardPageContent() {
     setClosureLoading(true);
 
     try {
-      const response = await fetch(`/api/v1/kpi/closure?${buildClosureApiQuery(closurePeriod)}`);
+      const query = buildClosureApiQuery(closurePeriod);
+      const response = await fetch(`/api/v1/kpi/closure?${query}&include_ofi=${includeOfi ? "true" : "false"}`);
       const body = await readResponseBody(response);
 
       if (!response.ok) {
@@ -438,7 +508,7 @@ function DashboardPageContent() {
     } finally {
       setClosureLoading(false);
     }
-  }, [closurePeriod, toast]);
+  }, [closurePeriod, toast, includeOfi]);
 
   useEffect(() => {
     if (!closureOpened || activeTab !== "closure") {
@@ -497,6 +567,7 @@ function DashboardPageContent() {
       const params = new URLSearchParams(buildClosureApiQuery(closurePeriod));
       params.set("dimension", dimension);
       params.set("dimension_value", dimensionValue);
+      params.set("include_ofi", includeOfi ? "true" : "false");
       const response = await fetch(`/api/v1/kpi/closure/drill-down?${params.toString()}`);
       const body = await readResponseBody(response);
 
@@ -525,9 +596,10 @@ function DashboardPageContent() {
     month: "long",
     year: "numeric",
   }).format(new Date());
-  const activeQuickPick = getActiveQuickPick(closurePeriod, customClosureDate);
+  const activeQuickPick = getActiveQuickPick(closurePeriod, hasCustomDates);
   const todayInputValue = getTodayInputValue();
-  const closureRateColour = getRateColour(closureData?.overall.rate ?? null);
+  const closureRateColour = getRateColour(closureData?.overall.closure_rate ?? null);
+  const periodLabel = formatPeriodLabel(closurePeriod, activeQuickPick);
 
   return (
     <AppLayout>
@@ -607,7 +679,9 @@ function DashboardPageContent() {
                     className={activeQuickPick === quickPick.id ? "admin-filter active" : "admin-filter"}
                     key={quickPick.id}
                     onClick={() => {
-                      setCustomClosureDate("");
+                      setHasCustomDates(false);
+                      setCustomFromDate("");
+                      setCustomToDate("");
                       updateClosurePeriod(getQuickPickPeriod(quickPick.id));
                     }}
                     type="button"
@@ -616,19 +690,63 @@ function DashboardPageContent() {
                   </button>
                 ))}
               </div>
-              <label className="closure-date-filter">
-                <span>As on date</span>
-                <input
-                  max={todayInputValue}
-                  type="date"
-                  value={customClosureDate}
-                  onChange={(event) => {
-                    setCustomClosureDate(event.target.value);
-                    if (event.target.value) {
-                      updateClosurePeriod({ type: "as_on", date: event.target.value });
+              <p style={{ color: "var(--text2)", fontSize: "0.875rem", margin: "0.5rem 0 1rem 0" }}>
+                {periodLabel}
+              </p>
+              <div style={{ display: "flex", gap: "0.75rem", alignItems: "flex-end" }}>
+                <label className="closure-date-filter">
+                  <span>From</span>
+                  <input
+                    max={todayInputValue}
+                    type="date"
+                    value={customFromDate || (closurePeriod.type === "range" ? closurePeriod.from : "")}
+                    onChange={(event) => {
+                      setCustomFromDate(event.target.value);
+                      setHasCustomDates(true);
+                    }}
+                  />
+                </label>
+                <label className="closure-date-filter">
+                  <span>To</span>
+                  <input
+                    max={todayInputValue}
+                    type="date"
+                    value={customToDate || (closurePeriod.type === "range" ? closurePeriod.to : "")}
+                    onChange={(event) => {
+                      setCustomToDate(event.target.value);
+                      setHasCustomDates(true);
+                    }}
+                  />
+                </label>
+                <button
+                  className="button"
+                  onClick={() => {
+                    const from = customFromDate || (closurePeriod.type === "range" ? closurePeriod.from : "");
+                    const to = customToDate || (closurePeriod.type === "range" ? closurePeriod.to : "");
+                    if (from && to) {
+                      updateClosurePeriod({ type: "range", from, to });
                     }
                   }}
+                  type="button"
+                >
+                  Apply
+                </button>
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, cursor: "pointer" }}>
+                <input
+                  checked={includeOfi}
+                  type="checkbox"
+                  onChange={(event) => {
+                    setIncludeOfi(event.target.checked);
+                  }}
                 />
+                <span style={{ fontSize: 14, color: "var(--text2)" }}>Include Opportunities for Improvement</span>
+                <span
+                  style={{ fontSize: 13, color: "var(--text3)" }}
+                  title="OFIs are excluded from closure rate calculations by default as they do not require mandatory remediation"
+                >
+                  ⓘ
+                </span>
               </label>
             </div>
 
@@ -652,7 +770,7 @@ function DashboardPageContent() {
                 isLoading={closureLoading}
                 label="Closure rate"
                 trend="closure rate"
-                value={formatRate(closureData?.overall.rate ?? null)}
+                value={formatRate(closureData?.overall.closure_rate ?? null)}
               />
             </section>
 

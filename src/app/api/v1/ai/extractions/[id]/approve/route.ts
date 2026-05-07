@@ -203,6 +203,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
             recommendation: nullableString(findingData.recommendation),
             priority: findingData.priority as Priority | null | undefined,
             control_rating: findingData.control_rating as ControlRating | null | undefined,
+            finding_type: findingData.finding_type ?? "Finding",
             display_order: findingIndex + 1,
             created_by_id: currentUser.id,
             created_via: "AIIngestion",

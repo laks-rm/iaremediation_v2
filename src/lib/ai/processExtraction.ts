@@ -3,7 +3,7 @@ import { toPrismaJson } from "./extraction";
 import { getLiteLlmChatCompletionsUrl, getLiteLlmModel } from "./litellm";
 import { getFileStream } from "../storage";
 
-const PROMPT_VERSION = "extract-v1.1";
+const PROMPT_VERSION = "extract-v1.2";
 
 function parseJsonOnly(content: string) {
   const cleaned = content
@@ -54,6 +54,7 @@ function buildExtractionPrompt() {
       ],
       findings: [
         {
+          finding_type: "Finding|OpportunityForImprovement",
           external_ref: "string|null",
           title: "string",
           description: "string|null",
@@ -84,6 +85,7 @@ function buildExtractionPrompt() {
       ],
     }),
     "If a value is not present, use null or an empty array. Normalize enum values exactly to the allowed values.",
+    "finding_type: Set to 'OpportunityForImprovement' if the finding is labelled as an observation, OFI, opportunity for improvement, or advisory note rather than a formal finding requiring mandatory remediation. Otherwise set to 'Finding'.",
   ].join("\n");
 }
 
