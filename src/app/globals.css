@@ -1524,12 +1524,13 @@ html[data-sidebar="collapsed"] {
   border-bottom: 1px solid var(--border);
 }
 
+.audits-table__head,
 .audits-row {
   display: grid;
-  grid-template-columns: minmax(120px, 1.1fr) minmax(200px, 1.8fr) minmax(100px, 1fr) minmax(120px, 1.1fr) minmax(100px, 0.9fr) minmax(120px, 1.2fr) minmax(80px, 0.7fr) minmax(100px, 1fr) minmax(80px, 0.7fr);
-  gap: 12px;
+  grid-template-columns: minmax(90px, 0.9fr) minmax(180px, 2.2fr) minmax(100px, 1fr) minmax(110px, 1.1fr) minmax(90px, 0.85fr) minmax(70px, 0.65fr) minmax(70px, 0.65fr) minmax(90px, 0.9fr) minmax(75px, 0.7fr);
+  gap: 8px;
   align-items: center;
-  padding: 14px 16px;
+  padding: 12px 16px;
 }
 
 .audits-row:hover {
@@ -1570,7 +1571,7 @@ html[data-sidebar="collapsed"] {
   border-bottom: 1px solid var(--border);
   background: var(--surface2);
   color: var(--text3);
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1579,6 +1580,7 @@ html[data-sidebar="collapsed"] {
 .audits-row {
   border-bottom: 1px solid var(--border);
   color: var(--text2);
+  font-size: 13px;
 }
 
 .audits-row:hover {
@@ -1614,10 +1616,10 @@ html[data-sidebar="collapsed"] {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  padding: 4px 9px;
-  font-size: 12px;
+  padding: 3px 7px;
+  font-size: 11px;
   font-style: normal;
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1.2;
   white-space: nowrap;
 }

@@ -50,3 +50,9 @@ export const CONTROL_RATING_LABELS: Record<string, string> = {
   PartiallyEffective: "Partially Effective",
   NotEffective: "Not Effective",
 };
+
+export const OPINION_RATING_LABELS: Record<string, string> = {
+  Satisfactory: "Satisfactory",
+  NeedsImprovement: "Needs Improvement",
+  Unsatisfactory: "Unsatisfactory",
+};

@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import AppLayout from "../../components/AppLayout";
 import EmptyState from "../../components/EmptyState";
 import { useToast } from "../../components/Toast";
-import { AUDIT_TYPE_LABELS } from "../../lib/constants";
+import { AUDIT_TYPE_LABELS, OPINION_RATING_LABELS } from "../../lib/constants";
 
 type AuditType = keyof typeof AUDIT_TYPE_LABELS;
 type OpinionRating = "Satisfactory" | "NeedsImprovement" | "Unsatisfactory";
@@ -38,11 +38,6 @@ const AUDIT_TYPES: AuditType[] = [
   "Operations",
   "RegulatoryOperations",
   "External",
-];
-const OPINION_RATINGS: OpinionRating[] = [
-  "Satisfactory",
-  "NeedsImprovement",
-  "Unsatisfactory",
 ];
 
 async function readResponseBody(response: Response) {
@@ -309,7 +304,7 @@ export default function AuditsPage() {
                       </span>
                       <span>
                         <i className={opinionClass(audit.opinion_rating)}>
-                        {audit.opinion_rating ?? "Not set"}
+                        {audit.opinion_rating ? (OPINION_RATING_LABELS[audit.opinion_rating] ?? audit.opinion_rating) : "Not set"}
                       </i>
                     </span>
                     <span>{formatDate(audit.report_issue_date)}</span>
