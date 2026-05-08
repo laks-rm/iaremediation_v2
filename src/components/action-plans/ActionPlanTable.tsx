@@ -1345,37 +1345,39 @@ function ActionPlanRows({
       {actionPlans.map((actionPlan) => {
         const isExpanded = expandedIds.has(actionPlan.id);
         return (
-          <article className="dashboard-row-wrap" key={actionPlan.id}>
+          <article className={`dashboard-row-wrap ${isExpanded ? 'dashboard-row-wrap--expanded' : ''}`} key={actionPlan.id}>
             {!isExpanded ? (
-              <button
-                className="dashboard-row"
-                onClick={() => {
-                  const next = new Set(expandedIds);
-                  next.add(actionPlan.id);
-                  setExpandedIds(next);
-                }}
-                type="button"
-                style={{
-                  gridTemplateColumns: DASHBOARD_TABLE_COLUMNS,
-                  cursor: "pointer",
-                }}
-              >
-                <ActionPlanSummary actionPlan={actionPlan} />
-              </button>
+              <>
+                <button
+                  className="dashboard-row"
+                  onClick={() => {
+                    const next = new Set(expandedIds);
+                    next.add(actionPlan.id);
+                    setExpandedIds(next);
+                  }}
+                  type="button"
+                  style={{
+                    gridTemplateColumns: DASHBOARD_TABLE_COLUMNS,
+                    cursor: "pointer",
+                  }}
+                >
+                  <ActionPlanSummary actionPlan={actionPlan} />
+                </button>
+                <button
+                  className="dashboard-row-copy-link"
+                  onClick={async (event) => {
+                    event.stopPropagation();
+                    const url = `${window.location.origin}/action-plans/${actionPlan.id}`;
+                    await navigator.clipboard.writeText(url);
+                    toast.success("Link copied!");
+                  }}
+                  title="Copy link to this action plan"
+                  type="button"
+                >
+                  🔗
+                </button>
+              </>
             ) : null}
-            <button
-              className="dashboard-row-copy-link"
-              onClick={async (event) => {
-                event.stopPropagation();
-                const url = `${window.location.origin}/action-plans/${actionPlan.id}`;
-                await navigator.clipboard.writeText(url);
-                toast.success("Link copied!");
-              }}
-              title="Copy link to this action plan"
-              type="button"
-            >
-              🔗
-            </button>
 
             {isExpanded ? (
               <ExpandedActionPlan
@@ -1580,7 +1582,6 @@ function ExpandedActionPlan({
       });
 
       toast.success("Changes saved successfully");
-      await refreshActionPlans();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to save changes.");
     } finally {
@@ -1928,9 +1929,21 @@ function ExpandedActionPlan({
         onConfirm={handleDelete}
       />
       <div className="expanded-panel">
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
+        <div className="expanded-panel__header">
           <ActionPlanSummary actionPlan={actionPlan} variant="header-card" />
           <div style={{ display: "flex", gap: "0.5rem", marginLeft: "auto" }}>
+            <button
+              className="button"
+              onClick={async () => {
+                const url = `${window.location.origin}/action-plans/${actionPlan.id}`;
+                await navigator.clipboard.writeText(url);
+                toast.success("Link copied!");
+              }}
+              title="Copy link to this action plan"
+              type="button"
+            >
+              🔗 Copy Link
+            </button>
             {isAdmin ? (
               <button
                 className="button button--danger"
@@ -1973,7 +1986,7 @@ function ExpandedActionPlan({
               disabled={!canEdit}
               value={draftDescription}
               onChange={(event) => setDraftDescription(event.target.value)}
-              rows={5}
+              rows={8}
             />
           </div>
 
@@ -1985,7 +1998,7 @@ function ExpandedActionPlan({
               disabled={!canEdit}
               value={draftRequiredEvidence}
               onChange={(event) => setDraftRequiredEvidence(event.target.value)}
-              rows={4}
+              rows={6}
             />
           </div>
 
@@ -2284,14 +2297,42 @@ function ExpandedActionPlan({
             disabled={!canEditFinding}
             label="Finding title"
             value={actionPlan.finding?.title ?? "No finding linked"}
-            onSave={async () => undefined}
+            onSave={async (value) => {
+              if (!actionPlan.finding?.id) return;
+              const response = await fetch(`/api/v1/findings/${actionPlan.finding.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ title: value }),
+              });
+              const body = await readResponseBody(response);
+              if (!response.ok) {
+                throw new Error(getResponseError(body, "Unable to update finding title."));
+              }
+              patchActionPlanLocal(actionPlan.id, {
+                finding: { ...actionPlan.finding, title: value },
+              });
+            }}
           />
           <EditableField
             disabled={!canEditFinding}
             label="Finding description"
             multiline
             value={actionPlan.finding?.description ?? null}
-            onSave={async () => undefined}
+            onSave={async (value) => {
+              if (!actionPlan.finding?.id) return;
+              const response = await fetch(`/api/v1/findings/${actionPlan.finding.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ description: value }),
+              });
+              const body = await readResponseBody(response);
+              if (!response.ok) {
+                throw new Error(getResponseError(body, "Unable to update finding description."));
+              }
+              patchActionPlanLocal(actionPlan.id, {
+                finding: { ...actionPlan.finding, description: value },
+              });
+            }}
           />
         </section>
 

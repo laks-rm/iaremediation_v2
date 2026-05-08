@@ -285,7 +285,7 @@ function ActionPlansPageContent() {
     }
 
     router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
-  }, [filters, groupByAudit, pathname, router, searchParams]);
+  }, [filters, groupByAudit, pathname, router]);
 
   useEffect(() => {
     if (user?.role !== "AuditTeam") {

@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 
 import AppLayout from "../../../../components/AppLayout";
 import EntityMultiSelect from "../../../../components/EntityMultiSelect";
-import { CONTROL_RATING_LABELS } from "../../../../lib/constants";
+import { CONTROL_RATING_LABELS, STATUS_LABELS } from "../../../../lib/constants";
 
 type Status = "Pending" | "Approved" | "Rejected";
 type AuditType = "IT" | "RegulatoryIT" | "Operations" | "RegulatoryOperations" | "External";
@@ -46,6 +46,7 @@ type ExtractedActionPlan = {
   finding_reference?: string | null;
   description?: string | null;
   priority?: Priority | null;
+  status?: string | null;
   target_date?: string | null;
   entity_ids?: string[];
   entities?: string[];
@@ -119,6 +120,7 @@ const AUDIT_TYPES: AuditType[] = ["IT", "RegulatoryIT", "Operations", "Regulator
 const OPINION_RATINGS: OpinionRating[] = ["Satisfactory", "NeedsImprovement", "Unsatisfactory"];
 const PRIORITIES: Priority[] = ["High", "Moderate", "Low"];
 const CONTROL_RATINGS: ControlRating[] = ["Effective", "PartiallyEffective", "NotEffective"];
+const ACTION_PLAN_STATUSES: string[] = ["NotStarted", "InProgress", "PendingValidation", "Closed", "RiskAccepted", "Dropped"];
 
 async function readResponseBody(response: Response) {
   const text = await response.text();
@@ -358,6 +360,7 @@ function emptyActionPlan(findingReference?: string | null): ExtractedActionPlan 
     finding_reference: findingReference ?? null,
     description: "",
     priority: "Moderate",
+    status: "NotStarted",
     target_date: "",
     entity_ids: [],
     owner_names: [],
@@ -925,25 +928,58 @@ export default function ExtractionReviewPage() {
               <div className="ai-finding-editor-stack">
                 {(humanEdits.findings ?? []).map((finding, findingIndex) => {
                   const expanded = expandedFindings.has(findingIndex);
+                  const canRemoveFinding = (humanEdits.findings ?? []).length > 1;
                   return (
                     <article className="ai-finding-editor" key={findingIndex}>
-                      <button
-                        className="ai-finding-editor__header"
-                        onClick={() => {
-                          const next = new Set(expandedFindings);
-                          if (next.has(findingIndex)) next.delete(findingIndex);
-                          else next.add(findingIndex);
-                          setExpandedFindings(next);
-                        }}
-                        type="button"
-                      >
-                        <span className="audit-ref-badge">{finding.external_ref || `F${findingIndex + 1}`}</span>
-                        <strong>{finding.title || "Untitled finding"}</strong>
-                        <span className={auditBadgeClass("priority", finding.priority)}>{finding.priority ?? "No priority"}</span>
-                        <span className={auditBadgeClass("control", finding.control_rating)}>{finding.control_rating ?? "No rating"}</span>
-                        <em>{finding.action_plans?.length ?? 0} APs</em>
-                        <span>{expanded ? "⌃" : "⌄"}</span>
-                      </button>
+                      <div style={{ position: "relative" }}>
+                        <button
+                          className="ai-finding-editor__header"
+                          onClick={() => {
+                            const next = new Set(expandedFindings);
+                            if (next.has(findingIndex)) next.delete(findingIndex);
+                            else next.add(findingIndex);
+                            setExpandedFindings(next);
+                          }}
+                          type="button"
+                        >
+                          <span className="audit-ref-badge">{finding.external_ref || `F${findingIndex + 1}`}</span>
+                          <strong>{finding.title || "Untitled finding"}</strong>
+                          <span className={auditBadgeClass("control", finding.control_rating)}>
+                            {finding.control_rating ? (CONTROL_RATING_LABELS[finding.control_rating] ?? finding.control_rating) : "No rating"}
+                          </span>
+                          <em>{finding.action_plans?.length ?? 0} APs</em>
+                          <span>{expanded ? "⌃" : "⌄"}</span>
+                        </button>
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (canRemoveFinding) {
+                              patchData({
+                                findings: (humanEdits.findings ?? []).filter((_f, i) => i !== findingIndex)
+                              });
+                            }
+                          }}
+                          style={{
+                            position: "absolute",
+                            top: "8px",
+                            right: "8px",
+                            background: "none",
+                            border: "none",
+                            color: canRemoveFinding ? "var(--red)" : "#ccc",
+                            cursor: canRemoveFinding ? "pointer" : "not-allowed",
+                            fontSize: "20px",
+                            lineHeight: 1,
+                            padding: "4px 8px",
+                            opacity: canRemoveFinding ? 1 : 0.5,
+                          }}
+                          title={canRemoveFinding ? "Remove finding" : "At least one finding is required"}
+                          type="button"
+                          onMouseEnter={(e) => { if (canRemoveFinding) e.currentTarget.style.opacity = "0.7"; }}
+                          onMouseLeave={(e) => { if (canRemoveFinding) e.currentTarget.style.opacity = "1"; }}
+                        >
+                          &times;
+                        </button>
+                      </div>
                       {expanded ? (
                         <div className="ai-finding-editor__body">
                           <div className="records-form-grid">
@@ -953,10 +989,6 @@ export default function ExtractionReviewPage() {
                             <ReviewField label="Title">
                               <input value={finding.title ?? ""} onChange={(event) => updateFinding(findingIndex, { title: event.target.value })} />
                             </ReviewField>
-                            <div className="record-field record-field--wide">
-                              <span>Priority</span>
-                              <Segmented options={PRIORITIES} value={finding.priority ?? "Moderate"} onChange={(priority) => updateFinding(findingIndex, { priority })} />
-                            </div>
                             <div className="record-field record-field--wide">
                               <span>Control rating</span>
                               <Segmented
@@ -986,15 +1018,66 @@ export default function ExtractionReviewPage() {
                               const selectedOwner = users.find((user) => user.id === actionPlan.owner_user_id);
                               const followUpAuditorOverridden = Boolean(followUpAuditorOverrides[actionPlanKey]);
 
+                              const actionPlanStatus = actionPlan.status ?? "NotStarted";
+                              const isExcludedStatus = actionPlanStatus === "RiskAccepted" || actionPlanStatus === "Dropped";
+
                               return (
-                                <article className="ai-ap-subcard" key={actionPlanIndex}>
+                                <article className="ai-ap-subcard" key={actionPlanIndex} style={{ position: "relative" }}>
+                                  <button
+                                    onClick={() => {
+                                      patchData({
+                                        findings: (humanEdits.findings ?? []).map((f, fi) =>
+                                          fi !== findingIndex ? f : {
+                                            ...f,
+                                            action_plans: (f.action_plans ?? []).filter((_ap, ai) => ai !== actionPlanIndex)
+                                          }
+                                        )
+                                      });
+                                    }}
+                                    style={{
+                                      position: "absolute",
+                                      top: "8px",
+                                      right: "8px",
+                                      background: "none",
+                                      border: "none",
+                                      color: "var(--red)",
+                                      cursor: "pointer",
+                                      fontSize: "20px",
+                                      lineHeight: 1,
+                                      padding: "4px 8px",
+                                      zIndex: 1,
+                                    }}
+                                    title="Remove action plan"
+                                    type="button"
+                                    onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.7"; }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+                                  >
+                                    &times;
+                                  </button>
                                   <div className="records-form-grid">
                                     <ReviewField label="AP reference">
-                                      <input value={actionPlan.reference ?? ""} onChange={(event) => updateActionPlan(findingIndex, actionPlanIndex, { reference: event.target.value })} />
+                                      <span style={{ color: "var(--text3)", fontSize: "14px", fontWeight: 500 }}>
+                                        F{findingIndex + 1}-A{actionPlanIndex + 1}
+                                      </span>
                                     </ReviewField>
-                                    <ReviewField label="Target date">
-                                      <input type="date" value={actionPlan.target_date ?? ""} onChange={(event) => updateActionPlan(findingIndex, actionPlanIndex, { target_date: event.target.value })} />
-                                    </ReviewField>
+                                    <div className="record-field record-field--wide">
+                                      <span>Status</span>
+                                      <Segmented
+                                        labels={STATUS_LABELS}
+                                        options={ACTION_PLAN_STATUSES}
+                                        value={actionPlanStatus}
+                                        onChange={(status) => updateActionPlan(findingIndex, actionPlanIndex, { status })}
+                                      />
+                                    </div>
+                                    {!isExcludedStatus ? (
+                                      <ReviewField label="Target date">
+                                        <input type="date" value={actionPlan.target_date ?? ""} onChange={(event) => updateActionPlan(findingIndex, actionPlanIndex, { target_date: event.target.value })} />
+                                      </ReviewField>
+                                    ) : (
+                                      <ReviewField label="Target date">
+                                        <span style={{ color: "var(--text3)", fontSize: "14px" }}>Not Applicable</span>
+                                      </ReviewField>
+                                    )}
                                     <ReviewField label="Description">
                                       <textarea value={actionPlan.description ?? ""} onChange={(event) => updateActionPlan(findingIndex, actionPlanIndex, { description: event.target.value })} />
                                     </ReviewField>

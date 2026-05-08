@@ -1613,6 +1613,13 @@ html[data-sidebar="collapsed"] {
   font-size: 13px;
 }
 
+.audits-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .audits-row:hover {
   background: var(--surface2);
 }
@@ -4938,6 +4945,16 @@ html.dark .activity-action-chip--purple { background: #581c87; color: #e9d5ff; }
   background: var(--surface);
 }
 
+.dashboard-row-wrap--expanded {
+  padding: 0;
+  overflow: visible;
+}
+
+.dashboard-row-wrap--expanded .expanded-panel {
+  border-top: none;
+  border-radius: 14px;
+}
+
 .dashboard-row {
   display: block;
   width: 100%;
@@ -5407,6 +5424,20 @@ html.dark .summary-evidence-pill--complete {
   border-top: 1px solid var(--border);
   padding: 18px;
   background: color-mix(in srgb, var(--surface2) 55%, var(--surface));
+  font-size: 14px;
+}
+
+.expanded-panel__header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.expanded-panel__header .button {
+  font-size: 13px;
+  padding: 6px 12px;
 }
 
 .expanded-panel-save-bar {
@@ -5444,6 +5475,13 @@ html.dark .summary-evidence-pill--complete {
   border-radius: 14px;
   padding: 14px;
   background: var(--surface);
+}
+
+.detail-field textarea,
+.detail-field input,
+.expanded-section textarea,
+.expanded-section input {
+  font-size: 13px;
 }
 
 .detail-field__label {

@@ -7,6 +7,9 @@ import { prisma } from "../../../../../lib/db/prisma";
 import { uploadFile } from "../../../../../lib/storage";
 import { processExtraction } from "../../../../../lib/ai/processExtraction";
 
+export const maxDuration = 60;
+export const runtime = "nodejs";
+
 const MAX_PDF_BYTES = 50 * 1024 * 1024;
 
 function isPdf(buffer: Buffer, file: File) {

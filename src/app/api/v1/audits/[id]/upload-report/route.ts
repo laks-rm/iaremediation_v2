@@ -7,6 +7,9 @@ import { AuthError, requireRole } from "../../../../../../lib/auth/requireRole";
 import { prisma } from "../../../../../../lib/db/prisma";
 import { uploadFile } from "../../../../../../lib/storage";
 
+export const maxDuration = 60;
+export const runtime = "nodejs";
+
 const MAX_PDF_BYTES = 50 * 1024 * 1024;
 
 type RouteContext = {
