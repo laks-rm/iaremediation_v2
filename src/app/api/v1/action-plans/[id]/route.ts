@@ -15,6 +15,7 @@ import {
 } from "../../../../../lib/action-plans/access";
 
 const updateSchema = z.object({
+  title: z.string().nullable().optional(),
   description: z.string().min(1).optional(),
   required_evidence: z.string().nullable().optional(),
   department: z.string().nullable().optional(),
@@ -75,6 +76,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const data: Prisma.action_plansUpdateInput = {};
     let validatedClosedAt: Date | null | undefined;
 
+    if (parsed.data.title !== undefined) {
+      data.title = nullableString(parsed.data.title);
+    }
     if (parsed.data.description !== undefined) {
       data.description = parsed.data.description;
     }
@@ -139,6 +143,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 export async function DELETE(request: NextRequest, context: RouteContext) {
   try {
     const currentUser = await requireRole(["AuditTeam"]);
+    if (!currentUser.is_admin) {
+      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+    }
+
     const { id } = await context.params;
     const existing = await prisma.action_plans.findFirst({
       where: { id, is_deleted: false },

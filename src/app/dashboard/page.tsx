@@ -36,6 +36,8 @@ type ClosureKpiResult = {
   overdue_created_in_period: number;
   net_movement: number;
   reschedule_rate: number | null;
+  risk_accepted: number;
+  dropped: number;
 };
 
 type ClosureKpiRow = {
@@ -49,6 +51,8 @@ type ClosureKpiRow = {
   overdue_created_in_period: number;
   net_movement: number;
   reschedule_rate: number | null;
+  risk_accepted: number;
+  dropped: number;
   due_in_period_ids: string[];
   overdue_brought_forward_ids: string[];
   closed_ids: string[];
@@ -324,7 +328,7 @@ function ClosureTableSkeleton() {
     <div className="closure-table__body">
       {Array.from({ length: 3 }, (_item, index) => (
         <div className="closure-table__row closure-table__row--skeleton" key={index}>
-          {Array.from({ length: 8 }, (_cell, cellIndex) => (
+          {Array.from({ length: 10 }, (_cell, cellIndex) => (
             <span key={cellIndex} />
           ))}
         </div>
@@ -369,6 +373,8 @@ function ClosureBreakdownTable({
             <span>Due total</span>
             <span>Closed</span>
             <span>Rate</span>
+            <span>Risk Accepted</span>
+            <span>Dropped</span>
             <span>Bar</span>
             <span aria-label="Drill-down" />
           </div>
@@ -393,6 +399,8 @@ function ClosureBreakdownTable({
                   <span>{row.due}</span>
                   <span>{row.closed}</span>
                   <span style={{ color: rateColour }}>{formatRate(row.closure_rate)}</span>
+                  <span style={{ color: "var(--text3)" }}>{row.risk_accepted}</span>
+                  <span style={{ color: "var(--text3)" }}>{row.dropped}</span>
                   <span className="closure-rate-bar" aria-hidden="true">
                     <i style={{ background: rateColour, width: `${row.closure_rate ?? 0}%` }} />
                   </span>
@@ -750,7 +758,7 @@ function DashboardPageContent() {
               </label>
             </div>
 
-            <section className="dashboard-kpis dashboard-kpis--three">
+            <section className="dashboard-kpis dashboard-kpis--four">
               <ClosureKpiCard
                 accent="var(--text3)"
                 isLoading={closureLoading}
@@ -766,11 +774,18 @@ function DashboardPageContent() {
                 value={closureData?.overall.closed ?? 0}
               />
               <ClosureKpiCard
-                accent={closureRateColour}
+                accent="var(--text3)"
                 isLoading={closureLoading}
-                label="Closure rate"
-                trend="closure rate"
-                value={formatRate(closureData?.overall.closure_rate ?? null)}
+                label="Overdue"
+                trend="overdue at period end"
+                value={closureData?.overall.overdue_at_period_end ?? 0}
+              />
+              <ClosureKpiCard
+                accent="var(--border)"
+                isLoading={closureLoading}
+                label="Excluded"
+                trend={`${closureData?.overall.risk_accepted ?? 0} risk accepted · ${closureData?.overall.dropped ?? 0} dropped`}
+                value={(closureData?.overall.risk_accepted ?? 0) + (closureData?.overall.dropped ?? 0)}
               />
             </section>
 

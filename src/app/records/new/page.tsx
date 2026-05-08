@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 
 import AppLayout from "../../../components/AppLayout";
 import EntityMultiSelect from "../../../components/EntityMultiSelect";
-import { AUDIT_TYPE_LABELS } from "../../../lib/constants";
+import { AUDIT_TYPE_LABELS, STATUS_LABELS } from "../../../lib/constants";
 
 type Mode = "newAudit" | "existingAudit" | "standalone";
 type EntryMethod = "manual" | "ai";
@@ -17,6 +17,7 @@ type AuditType = keyof typeof AUDIT_TYPE_LABELS;
 type OpinionRating = "Satisfactory" | "NeedsImprovement" | "Unsatisfactory";
 type CreatedVia = "Manual" | "Standalone";
 type FindingType = "Finding" | "OpportunityForImprovement";
+type ActionPlanStatus = keyof typeof STATUS_LABELS;
 
 type EntityOption = {
   id: string;
@@ -66,7 +67,6 @@ type FindingDraft = {
   description: string;
   root_cause: string;
   recommendation: string;
-  priority: Priority;
   control_rating: ControlRating;
   finding_type: FindingType;
   audit_type: AuditType | null;
@@ -75,8 +75,10 @@ type FindingDraft = {
 
 type ActionPlanDraft = {
   id: string;
+  title: string;
   description: string;
   priority: Priority;
+  status: ActionPlanStatus;
   original_target_date: string;
   current_target_date: string;
   required_evidence: string;
@@ -143,6 +145,14 @@ const CONTROL_RATING_LABELS: Record<ControlRating, string> = {
   NotEffective: "Not Effective",
 };
 const FINDING_TYPES: FindingType[] = ["Finding", "OpportunityForImprovement"];
+const ACTION_PLAN_STATUSES: ActionPlanStatus[] = [
+  "NotStarted",
+  "InProgress",
+  "PendingValidation",
+  "Closed",
+  "RiskAccepted",
+  "Dropped",
+];
 
 const emptyAudit: AuditDraft = {
   name: "",
@@ -166,7 +176,6 @@ function newFindingDraft(): FindingDraft {
     description: "",
     root_cause: "",
     recommendation: "",
-    priority: "Moderate",
     control_rating: "PartiallyEffective",
     finding_type: "Finding",
     audit_type: null,
@@ -177,8 +186,10 @@ function newFindingDraft(): FindingDraft {
 function newActionPlanDraft(entityIds: string[] = []): ActionPlanDraft {
   return {
     id: makeId("ap"),
+    title: "",
     description: "",
     priority: "Moderate",
+    status: "NotStarted",
     original_target_date: "",
     current_target_date: "",
     required_evidence: "",
@@ -730,7 +741,7 @@ function NewRecordPageContent() {
         description: finding.description,
         root_cause: finding.root_cause,
         recommendation: finding.recommendation,
-        priority: finding.priority,
+        priority: null,
         control_rating: finding.control_rating,
         finding_type: finding.finding_type,
         audit_type: isStandalone ? finding.audit_type : null,
@@ -754,9 +765,11 @@ function NewRecordPageContent() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         ...actionPlan,
+        title: actionPlan.title.trim() || null,
         current_target_date: actionPlan.original_target_date,
         finding_id: findingId,
         created_via: createdVia,
+        status: actionPlan.status,
       }),
     });
     const body = await readResponseBody(response);
@@ -848,7 +861,6 @@ function NewRecordPageContent() {
           finding_title: finding.title,
           finding_description: finding.description,
           finding_recommendation: finding.recommendation,
-          finding_priority: finding.priority,
           action_plan_description: actionPlan.description,
           audit_name: mode === "newAudit" ? audit.name : selectedAudit?.name ?? null,
         }),
@@ -1273,7 +1285,7 @@ function NewRecordPageContent() {
                   <div style={{ borderTop: "1px solid #e2e8f0", marginTop: 20, paddingTop: 20 }}>
                     <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Action Plans</h3>
                     <div className="records-stack">
-                      {(actionPlansByFinding[finding.id] ?? []).map((actionPlan) => (
+                      {(actionPlansByFinding[finding.id] ?? []).map((actionPlan, apIndex) => (
                         <ActionPlanCard
                           actionPlan={actionPlan}
                           aiError={aiErrors[actionPlan.id]}
@@ -1281,6 +1293,7 @@ function NewRecordPageContent() {
                           entities={options.entities.filter((entity) => audit.entity_ids.includes(entity.id))}
                           followUpAuditors={options.follow_up_auditors}
                           key={actionPlan.id}
+                          tempLabel={`F${index + 1}-A${apIndex + 1}`}
                           users={options.users}
                           onGenerate={() => generateEvidence(actionPlan, finding)}
                           onRemove={() => removeActionPlan(actionPlan.id, finding.id)}
@@ -1351,10 +1364,6 @@ function NewRecordPageContent() {
           <input value={finding.external_ref} onChange={(event) => onChange({ external_ref: event.target.value })} />
         </Field>
         <div className="record-field record-field--wide">
-          <span>Priority</span>
-          <Segmented options={PRIORITIES} value={finding.priority} onChange={(priority) => onChange({ priority })} />
-        </div>
-        <div className="record-field record-field--wide">
           <span>Control rating</span>
           <Segmented
             labels={CONTROL_RATING_LABELS}
@@ -1397,7 +1406,7 @@ function NewRecordPageContent() {
                   + Add another action plan
                 </button>
               </header>
-              {(actionPlansByFinding[finding.id] ?? []).map((actionPlan) => (
+              {(actionPlansByFinding[finding.id] ?? []).map((actionPlan, apIndex) => (
                 <ActionPlanCard
                   actionPlan={actionPlan}
                   aiError={aiErrors[actionPlan.id]}
@@ -1405,6 +1414,7 @@ function NewRecordPageContent() {
                   entities={options.entities.filter((entity) => audit.entity_ids.includes(entity.id))}
                   followUpAuditors={options.follow_up_auditors}
                   key={actionPlan.id}
+                  tempLabel={`F${index + 1}-A${apIndex + 1}`}
                   users={options.users}
                   onGenerate={() => generateEvidence(actionPlan, finding)}
                   onRemove={() => removeActionPlan(actionPlan.id, finding.id)}
@@ -1495,7 +1505,7 @@ function NewRecordPageContent() {
         <section className="records-card" style={{ marginTop: 24 }}>
           <h2>Action Plans</h2>
           <div className="records-stack">
-            {flatActionPlans.map((actionPlan) => (
+            {flatActionPlans.map((actionPlan, apIndex) => (
               <ActionPlanCard
                 actionPlan={actionPlan}
                 aiError={aiErrors[actionPlan.id]}
@@ -1503,6 +1513,7 @@ function NewRecordPageContent() {
                 entities={entities}
                 followUpAuditors={options.follow_up_auditors}
                 key={actionPlan.id}
+                tempLabel={`A${apIndex + 1}`}
                 users={options.users}
                 onGenerate={() => generateEvidence(actionPlan, finding)}
                 onRemove={() => removeActionPlan(actionPlan.id)}
@@ -1538,7 +1549,7 @@ function NewRecordPageContent() {
           <div style={{ borderTop: "1px solid #e2e8f0", marginTop: 20, paddingTop: 20 }}>
             <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Action Plans</h3>
             <div className="records-stack">
-              {flatActionPlans.map((actionPlan) => (
+              {flatActionPlans.map((actionPlan, apIndex) => (
                 <ActionPlanCard
                   actionPlan={actionPlan}
                   aiError={aiErrors[actionPlan.id]}
@@ -1546,6 +1557,7 @@ function NewRecordPageContent() {
                   entities={options.entities}
                   followUpAuditors={options.follow_up_auditors}
                   key={actionPlan.id}
+                  tempLabel={`A${apIndex + 1}`}
                   users={options.users}
                   onGenerate={() => generateEvidence(actionPlan, standaloneFinding)}
                   onRemove={() => removeActionPlan(actionPlan.id)}
@@ -1590,7 +1602,7 @@ function NewRecordPageContent() {
           <h1>Add action plans</h1>
         </header>
         <div className="records-stack">
-          {flatActionPlans.map((actionPlan) => (
+          {flatActionPlans.map((actionPlan, apIndex) => (
             <ActionPlanCard
               actionPlan={actionPlan}
               aiError={aiErrors[actionPlan.id]}
@@ -1598,6 +1610,7 @@ function NewRecordPageContent() {
               entities={entities}
               followUpAuditors={options.follow_up_auditors}
               key={actionPlan.id}
+              tempLabel={`A${apIndex + 1}`}
               users={options.users}
               onGenerate={() => generateEvidence(actionPlan, finding)}
               onRemove={() => removeActionPlan(actionPlan.id)}
@@ -1701,6 +1714,7 @@ function ActionPlanCard({
   followUpAuditors,
   aiLoading,
   aiError,
+  tempLabel,
   onUpdate,
   onRemove,
   onGenerate,
@@ -1711,6 +1725,7 @@ function ActionPlanCard({
   followUpAuditors: UserOption[];
   aiLoading: boolean;
   aiError?: string;
+  tempLabel?: string;
   onUpdate: (patch: Partial<ActionPlanDraft>) => void;
   onRemove: () => void;
   onGenerate: () => void;
@@ -1723,12 +1738,22 @@ function ActionPlanCard({
   return (
     <article className="records-ap-card">
       <header>
-        <strong>Action Plan</strong>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <strong>Action Plan</strong>
+          {tempLabel ? <span style={{ color: "#9CA3AF", fontSize: 12, fontWeight: 400 }}>{tempLabel}</span> : null}
+        </div>
         <button className="button button--danger" onClick={onRemove} type="button">
           Remove
         </button>
       </header>
       <div className="records-form-grid">
+        <Field label="Title (optional)" hint="Short summary — leave blank to use description">
+          <input
+            placeholder="Short summary — leave blank to use description"
+            value={actionPlan.title}
+            onChange={(event) => onUpdate({ title: event.target.value })}
+          />
+        </Field>
         <Field label="Description">
           <textarea
             value={actionPlan.description}
@@ -1743,18 +1768,38 @@ function ActionPlanCard({
             onChange={(priority) => onUpdate({ priority })}
           />
         </div>
-        <Field label="Target date">
-          <input
-            type="date"
-            value={actionPlan.original_target_date}
-            onChange={(event) =>
-              onUpdate({
-                original_target_date: event.target.value,
-                current_target_date: event.target.value,
-              })
-            }
+        <div className="record-field record-field--wide">
+          <span>Status</span>
+          <Segmented
+            labels={STATUS_LABELS}
+            options={ACTION_PLAN_STATUSES}
+            value={actionPlan.status}
+            onChange={(status) => onUpdate({ status })}
           />
-        </Field>
+        </div>
+        {actionPlan.status !== "RiskAccepted" && actionPlan.status !== "Dropped" ? (
+          <Field label="Target date">
+            <input
+              type="date"
+              value={actionPlan.original_target_date}
+              onChange={(event) =>
+                onUpdate({
+                  original_target_date: event.target.value,
+                  current_target_date: event.target.value,
+                })
+              }
+            />
+          </Field>
+        ) : (
+          <Field label="Target date">
+            <input
+              type="text"
+              value="Not Applicable"
+              disabled
+              style={{ background: "#F8F7F4", color: "#9CA3AF", cursor: "not-allowed" }}
+            />
+          </Field>
+        )}
         <Field label="Owner">
           <select
             value={actionPlan.owner_user_id}

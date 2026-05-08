@@ -212,14 +212,22 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
         for (const [actionPlanIndex, actionPlanData] of actionPlansForFinding(finalData, findingData).entries()) {
           try {
+            const extractedStatus = actionPlanData.status;
+            const validStatuses = ["NotStarted", "InProgress", "PendingValidation", "Closed", "RiskAccepted", "Dropped"];
+            const status = typeof extractedStatus === "string" && validStatuses.includes(extractedStatus)
+              ? extractedStatus
+              : "NotStarted";
+            
             const actionPlan = await prisma.action_plans.create({
               data: {
                 display_id: await getUniqueDisplayId(auditReportIssueYear),
                 finding_id: finding.id,
+                title: nullableString(actionPlanData.title),
                 description:
                   nullableString(actionPlanData.description) ??
                   `Action plan ${actionPlanIndex + 1} for ${finding.title}`,
                 priority: actionPlanData.priority as Priority | null | undefined,
+                status: status as "NotStarted" | "InProgress" | "PendingValidation" | "Closed" | "RiskAccepted" | "Dropped",
                 original_target_date: parseNullableDate(actionPlanData.target_date),
                 current_target_date: parseNullableDate(actionPlanData.target_date),
                 required_evidence: nullableString(actionPlanData.required_evidence),

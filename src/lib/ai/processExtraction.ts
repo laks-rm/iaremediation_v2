@@ -3,7 +3,7 @@ import { toPrismaJson } from "./extraction";
 import { getLiteLlmChatCompletionsUrl, getLiteLlmModel } from "./litellm";
 import { getFileStream } from "../storage";
 
-const PROMPT_VERSION = "extract-v1.2";
+const PROMPT_VERSION = "extract-v1.4";
 
 function parseJsonOnly(content: string) {
   const cleaned = content
@@ -66,8 +66,10 @@ function buildExtractionPrompt() {
           action_plans: [
             {
               finding_reference: "string matching this finding external_ref",
+              title: "string|null",
               description: "string",
               priority: "High|Moderate|Low|null",
+              status: "NotStarted|InProgress|PendingValidation|Closed|RiskAccepted|Dropped|null",
               target_date: "YYYY-MM-DD|null",
               owner_names: ["string"],
             },
@@ -77,8 +79,10 @@ function buildExtractionPrompt() {
       action_plans: [
         {
           finding_reference: "string matching a finding external_ref",
+          title: "string|null",
           description: "string",
           priority: "High|Moderate|Low|null",
+          status: "NotStarted|InProgress|PendingValidation|Closed|RiskAccepted|Dropped|null",
           target_date: "YYYY-MM-DD|null",
           owner_names: ["string"],
         },
@@ -86,6 +90,8 @@ function buildExtractionPrompt() {
     }),
     "If a value is not present, use null or an empty array. Normalize enum values exactly to the allowed values.",
     "finding_type: Set to 'OpportunityForImprovement' if the finding is labelled as an observation, OFI, opportunity for improvement, or advisory note rather than a formal finding requiring mandatory remediation. Otherwise set to 'Finding'.",
+    "status: Infer the action plan status from the PDF content. If the description or context indicates the action plan is completed, closed, implemented, or done, set to 'Closed'. If it mentions in progress, ongoing, or being worked on, set to 'InProgress'. If it mentions risk accepted, management accepts the risk, or risk tolerance, set to 'RiskAccepted'. If it mentions dropped, cancelled, or no longer applicable, set to 'Dropped'. If it mentions pending validation, awaiting verification, or ready for review, set to 'PendingValidation'. Otherwise default to 'NotStarted'.",
+    "title: For each action plan, generate a concise title (max 10 words) summarizing the action plan if one can be clearly identified from the PDF. Otherwise leave null. The title should capture the essence of the remediation action.",
   ].join("\n");
 }
 

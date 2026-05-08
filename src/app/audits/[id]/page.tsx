@@ -143,6 +143,7 @@ export default function AuditDetailPage() {
   const [findingDraft, setFindingDraft] = useState<Partial<FindingDetail>>({});
   const [deleteAuditOpen, setDeleteAuditOpen] = useState(false);
   const [deleteFindingId, setDeleteFindingId] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const loadAudit = useCallback(async () => {
     setIsLoading(true);
@@ -165,6 +166,7 @@ export default function AuditDetailPage() {
   useEffect(() => {
     getSession().then((session) => {
       setRole(session?.user?.role ?? null);
+      setIsAdmin(session?.user?.is_admin === true);
     });
   }, []);
 
@@ -241,7 +243,6 @@ export default function AuditDetailPage() {
       title: finding.title,
       description: finding.description,
       recommendation: finding.recommendation,
-      priority: finding.priority,
       control_rating: finding.control_rating,
     });
   }
@@ -509,9 +510,11 @@ export default function AuditDetailPage() {
                                 <button className="audit-icon-button" onClick={() => startFindingEdit(finding)} type="button">
                                   ✎
                                 </button>
-                                <button className="audit-icon-button" onClick={() => setDeleteFindingId(finding.id)} type="button">
-                                  Delete
-                                </button>
+                                {isAdmin ? (
+                                  <button className="audit-icon-button" onClick={() => setDeleteFindingId(finding.id)} type="button">
+                                    Delete
+                                  </button>
+                                ) : null}
                               </>
                             )}
                           </div>
@@ -519,7 +522,6 @@ export default function AuditDetailPage() {
                       </header>
 
                       <div className="audit-finding-badges">
-                        <span className={badgeClass("priority", finding.priority)}>{finding.priority ?? "No priority"}</span>
                         <span className={badgeClass("control", finding.control_rating)}>
                           {finding.control_rating ?? "No rating"}
                         </span>
@@ -533,12 +535,12 @@ export default function AuditDetailPage() {
                             onChange={(event) => setFindingDraft({ ...findingDraft, external_ref: event.target.value })}
                           />
                           <select
-                            value={findingDraft.priority ?? ""}
-                            onChange={(event) => setFindingDraft({ ...findingDraft, priority: event.target.value as Priority })}
+                            value={findingDraft.control_rating ?? ""}
+                            onChange={(event) => setFindingDraft({ ...findingDraft, control_rating: event.target.value as ControlRating })}
                           >
-                            {PRIORITIES.map((priority) => (
-                              <option key={priority} value={priority}>
-                                {priority}
+                            {CONTROL_RATINGS.map((rating) => (
+                              <option key={rating} value={rating}>
+                                {rating}
                               </option>
                             ))}
                           </select>
@@ -673,7 +675,13 @@ export default function AuditDetailPage() {
           confirmLabel="Delete Finding"
           isDangerous
           isOpen={Boolean(deleteFindingId)}
-          message="This will soft-delete the finding from this audit."
+          message={
+            deleteFindingId
+              ? `Delete this finding and all its action plans? ${
+                  audit.findings.find((f) => f.id === deleteFindingId)?.action_plan_count ?? 0
+                } action plan(s) will also be deleted. This cannot be undone.`
+              : ""
+          }
           title="Delete finding?"
           onCancel={() => setDeleteFindingId("")}
           onConfirm={deleteFinding}

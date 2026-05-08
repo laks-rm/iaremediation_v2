@@ -102,11 +102,21 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 export async function DELETE(request: NextRequest, context: RouteContext) {
   try {
     const currentUser = await requireRole(["AuditTeam"]);
+    if (!currentUser.is_admin) {
+      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+    }
+
     const { id } = await context.params;
     const existing = await prisma.findings.findFirst({
       where: {
         id,
         is_deleted: false,
+      },
+      include: {
+        action_plans: {
+          where: { is_deleted: false },
+          select: { id: true, display_id: true },
+        },
       },
     });
 
@@ -114,14 +124,24 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    const finding = await prisma.findings.update({
-      where: {
-        id,
-      },
-      data: {
-        is_deleted: true,
-      },
-    });
+    // Soft delete the finding and all its action plans
+    await prisma.$transaction([
+      prisma.action_plans.updateMany({
+        where: {
+          finding_id: id,
+          is_deleted: false,
+        },
+        data: {
+          is_deleted: true,
+        },
+      }),
+      prisma.findings.update({
+        where: { id },
+        data: {
+          is_deleted: true,
+        },
+      }),
+    ]);
 
     await writeAuditLog({
       userId: currentUser.id,
@@ -129,11 +149,14 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       entityType: "findings",
       entityId: id,
       beforeJson: toAuditJson(existing),
-      afterJson: toAuditJson(finding),
+      afterJson: toAuditJson({ ...existing, is_deleted: true }),
       ipAddress: getClientIp(request),
     });
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ 
+      success: true,
+      action_plans_deleted: existing.action_plans.length,
+    });
   } catch (error) {
     if (error instanceof AuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });

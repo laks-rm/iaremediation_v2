@@ -11,6 +11,7 @@ import {
   STATUS_LABELS,
 } from "../../lib/constants";
 import ColumnFilterPopover from "../dashboard/ColumnFilterPopover";
+import ConfirmDialog from "../ConfirmDialog";
 import EmptyState from "../EmptyState";
 import { useToast } from "../Toast";
 import ActionPlanSummary from "./ActionPlanSummary";
@@ -95,6 +96,7 @@ type DashboardTargetDateRevision = {
 export type DashboardActionPlan = {
   id: string;
   display_id: string;
+  title: string | null;
   description: string;
   priority: Priority | null;
   status: Status;
@@ -1344,24 +1346,23 @@ function ActionPlanRows({
         const isExpanded = expandedIds.has(actionPlan.id);
         return (
           <article className="dashboard-row-wrap" key={actionPlan.id}>
-            <button
-              className="dashboard-row"
-              onClick={() => {
-                const next = new Set(expandedIds);
-                if (next.has(actionPlan.id)) {
-                  next.delete(actionPlan.id);
-                } else {
+            {!isExpanded ? (
+              <button
+                className="dashboard-row"
+                onClick={() => {
+                  const next = new Set(expandedIds);
                   next.add(actionPlan.id);
-                }
-                setExpandedIds(next);
-              }}
-              type="button"
-              style={{
-                gridTemplateColumns: DASHBOARD_TABLE_COLUMNS,
-              }}
-            >
-              <ActionPlanSummary actionPlan={actionPlan} />
-            </button>
+                  setExpandedIds(next);
+                }}
+                type="button"
+                style={{
+                  gridTemplateColumns: DASHBOARD_TABLE_COLUMNS,
+                  cursor: "pointer",
+                }}
+              >
+                <ActionPlanSummary actionPlan={actionPlan} />
+              </button>
+            ) : null}
             <button
               className="dashboard-row-copy-link"
               onClick={async (event) => {
@@ -1397,6 +1398,12 @@ function ActionPlanRows({
                   }))
                 }
                 userOptions={userOptions}
+                user={user}
+                onRequestClose={() => {
+                  const next = new Set(expandedIds);
+                  next.delete(actionPlan.id);
+                  setExpandedIds(next);
+                }}
               />
             ) : null}
           </article>
@@ -1421,6 +1428,8 @@ function ExpandedActionPlan({
   revisionHistoryOpen,
   toggleRevisionHistory,
   userOptions,
+  onRequestClose,
+  user,
 }: {
   actionPlan: DashboardActionPlan;
   canEdit: boolean;
@@ -1441,6 +1450,8 @@ function ExpandedActionPlan({
   revisionHistoryOpen: boolean;
   toggleRevisionHistory: () => void;
   userOptions: UserOption[];
+  onRequestClose: () => void;
+  user: DashboardUser | null;
 }) {
   const [comment, setComment] = useState("");
   const [commentError, setCommentError] = useState("");
@@ -1453,9 +1464,169 @@ function ExpandedActionPlan({
   const [analysisDrafts, setAnalysisDrafts] = useState<Record<string, string>>({});
   const [analysisErrors, setAnalysisErrors] = useState<Record<string, string>>({});
   const [analysisSavedIds, setAnalysisSavedIds] = useState<Set<string>>(new Set());
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const evidenceInputRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
   const audit = actionPlan.finding?.audit ?? null;
+  const isAdmin = user?.is_admin === true;
+
+  // Buffered changes state
+  const [draftDescription, setDraftDescription] = useState(actionPlan.description);
+  const [draftRequiredEvidence, setDraftRequiredEvidence] = useState(actionPlan.required_evidence ?? "");
+  const [draftStatus, setDraftStatus] = useState(actionPlan.status);
+  const [draftClosedAt, setDraftClosedAt] = useState<string | null>(actionPlan.closed_at);
+  const [draftPriority, setDraftPriority] = useState(actionPlan.priority);
+  const [draftTitle, setDraftTitle] = useState(actionPlan.title ?? "");
+  const [draftClosureRemarks, setDraftClosureRemarks] = useState(actionPlan.closure_remarks ?? "");
+  const [isSaving, setIsSaving] = useState(false);
+  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
+
+  // Track which fields have changed
+  const changedFields = useMemo(() => {
+    const fields: string[] = [];
+    if (draftDescription !== actionPlan.description) fields.push("Action Plan");
+    if (draftRequiredEvidence !== (actionPlan.required_evidence ?? "")) fields.push("Required Evidence");
+    if (draftStatus !== actionPlan.status) fields.push("Status");
+    if (draftClosedAt !== actionPlan.closed_at) fields.push("Closure Date");
+    if (draftPriority !== actionPlan.priority) fields.push("Priority");
+    if (draftTitle !== (actionPlan.title ?? "")) fields.push("Title");
+    if (draftClosureRemarks !== (actionPlan.closure_remarks ?? "")) fields.push("Closure Remarks");
+    return fields;
+  }, [
+    draftDescription,
+    draftRequiredEvidence,
+    draftStatus,
+    draftClosedAt,
+    draftPriority,
+    draftTitle,
+    draftClosureRemarks,
+    actionPlan,
+  ]);
+
+  const hasUnsavedChanges = changedFields.length > 0;
+
+  // Reset drafts when actionPlan changes (e.g., after refresh)
+  useEffect(() => {
+    setDraftDescription(actionPlan.description);
+    setDraftRequiredEvidence(actionPlan.required_evidence ?? "");
+    setDraftStatus(actionPlan.status);
+    setDraftClosedAt(actionPlan.closed_at);
+    setDraftPriority(actionPlan.priority);
+    setDraftTitle(actionPlan.title ?? "");
+    setDraftClosureRemarks(actionPlan.closure_remarks ?? "");
+  }, [actionPlan]);
+
+  function discardChanges() {
+    setDraftDescription(actionPlan.description);
+    setDraftRequiredEvidence(actionPlan.required_evidence ?? "");
+    setDraftStatus(actionPlan.status);
+    setDraftClosedAt(actionPlan.closed_at);
+    setDraftPriority(actionPlan.priority);
+    setDraftTitle(actionPlan.title ?? "");
+    setDraftClosureRemarks(actionPlan.closure_remarks ?? "");
+  }
+
+  async function saveChanges() {
+    setIsSaving(true);
+    try {
+      // Build the patch payload for the main action plan fields
+      const patch: Record<string, unknown> = {};
+      if (draftDescription !== actionPlan.description) patch.description = draftDescription;
+      if (draftRequiredEvidence !== (actionPlan.required_evidence ?? ""))
+        patch.required_evidence = draftRequiredEvidence || null;
+      if (draftPriority !== actionPlan.priority) patch.priority = draftPriority;
+      if (draftTitle !== (actionPlan.title ?? "")) patch.title = draftTitle || null;
+      if (draftClosureRemarks !== (actionPlan.closure_remarks ?? ""))
+        patch.closure_remarks = draftClosureRemarks || null;
+      if (draftClosedAt !== actionPlan.closed_at) patch.closed_at = draftClosedAt;
+
+      // Save main fields via PATCH if any changed
+      if (Object.keys(patch).length > 0) {
+        const response = await fetch(`/api/v1/action-plans/${actionPlan.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        });
+        const body = await readResponseBody(response);
+
+        if (!response.ok) {
+          throw new Error(getResponseError(body, "Unable to save changes."));
+        }
+      }
+
+      // Save status change separately if changed
+      if (draftStatus !== actionPlan.status) {
+        const response = await fetch(`/api/v1/action-plans/${actionPlan.id}/status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ new_status: draftStatus }),
+        });
+        const body = await readResponseBody(response);
+
+        if (!response.ok) {
+          throw new Error(getResponseError(body, "Unable to save status change."));
+        }
+      }
+
+      // Update local state with all changes
+      patchActionPlanLocal(actionPlan.id, {
+        description: draftDescription,
+        required_evidence: draftRequiredEvidence || null,
+        status: draftStatus,
+        closed_at: draftClosedAt,
+        priority: draftPriority,
+        title: draftTitle || null,
+        closure_remarks: draftClosureRemarks || null,
+      });
+
+      toast.success("Changes saved successfully");
+      await refreshActionPlans();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to save changes.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function handleCloseRequest() {
+    if (hasUnsavedChanges) {
+      setShowUnsavedDialog(true);
+    } else {
+      onRequestClose();
+    }
+  }
+
+  async function saveAndClose() {
+    await saveChanges();
+    setShowUnsavedDialog(false);
+    onRequestClose();
+  }
+
+  function discardAndClose() {
+    discardChanges();
+    setShowUnsavedDialog(false);
+    onRequestClose();
+  }
+
+  async function handleDelete() {
+    setShowDeleteDialog(false);
+    try {
+      const response = await fetch(`/api/v1/action-plans/${actionPlan.id}`, {
+        method: "DELETE",
+      });
+      const body = await readResponseBody(response);
+
+      if (!response.ok) {
+        throw new Error(getResponseError(body, "Unable to delete action plan."));
+      }
+
+      toast.success("Action plan deleted successfully");
+      onRequestClose();
+      await refreshActionPlans();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to delete action plan.");
+    }
+  }
 
   async function reviseTargetDate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1736,160 +1907,225 @@ function ExpandedActionPlan({
   }
 
   return (
-    <div className="expanded-panel">
-      <ActionPlanSummary actionPlan={actionPlan} variant="header-card" />
-      <div className="expanded-panel__left">
-        <EditableField
-          disabled={!canEdit}
-          label="Action plan"
-          multiline
-          value={actionPlan.description}
-          onSave={(value) =>
-            mutateActionPlan(
-              actionPlan,
-              `/api/v1/action-plans/${actionPlan.id}`,
-              { description: value },
-              { description: value },
-            )
-          }
-        />
-        <EditableField
-          disabled={!canEdit}
-          label="Required evidence"
-          multiline
-          value={actionPlan.required_evidence}
-          onSave={(value) =>
-            mutateActionPlan(
-              actionPlan,
-              `/api/v1/action-plans/${actionPlan.id}`,
-              { required_evidence: value },
-              { required_evidence: value },
-            )
-          }
-        />
-
-        <div className="revision-strip">
-          <strong>Target date</strong>
-          <span>
-            Original: {formatDate(actionPlan.original_target_date)} | Current:{" "}
-            {formatDate(actionPlan.current_target_date)}
-          </span>
-          <div className="button-with-tooltip">
-            <button className="button" disabled={!canEdit} onClick={() => setRevisionOpen((current) => !current)} type="button">
-              Request new target date
-            </button>
-            {!canEdit ? null : (
-              <span className="button-tooltip">Request a new target date for this action plan. The change will be logged and tracked.</span>
-            )}
-          </div>
-        </div>
-        {revisionOpen ? (
-          <form className="comment-form revision-form" onSubmit={reviseTargetDate}>
-            <input
-              className={revisionErrors.date ? "input-error" : undefined}
-              type="date"
-              value={revisionDate}
-              onChange={(event) => {
-                setRevisionDate(event.target.value);
-                setRevisionErrors((current) => ({ ...current, date: "" }));
-              }}
-            />
-            {revisionErrors.date ? <span className="field-error">{revisionErrors.date}</span> : null}
-            <input
-              className={revisionErrors.justification ? "input-error" : undefined}
-              placeholder="Justification"
-              value={revisionJustification}
-              onChange={(event) => {
-                setRevisionJustification(event.target.value);
-                setRevisionErrors((current) => ({ ...current, justification: "" }));
-              }}
-            />
-            {revisionErrors.justification ? <span className="field-error">{revisionErrors.justification}</span> : null}
-            <button className="button button--primary" type="submit">Submit revision</button>
-          </form>
-        ) : null}
-        {actionPlan.reschedule_count > 0 ? (
-          <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
-            <button
-              onClick={toggleRevisionHistory}
-              style={{
-                alignItems: "center",
-                background: "transparent",
-                border: 0,
-                color: "var(--text3)",
-                cursor: "pointer",
-                display: "inline-flex",
-                fontSize: 12,
-                gap: 4,
-                padding: 0,
-                width: "fit-content",
-              }}
-              type="button"
-            >
-              <span
-                aria-hidden="true"
-                style={{
-                  display: "inline-block",
-                  transform: revisionHistoryOpen ? "rotate(90deg)" : "rotate(0deg)",
-                  transition: "transform 120ms ease",
-                }}
+    <>
+      <ConfirmDialog
+        cancelLabel="Discard changes"
+        confirmLabel="Save changes"
+        isOpen={showUnsavedDialog}
+        message={`You have unsaved changes to: ${changedFields.join(", ")}. Would you like to save before closing?`}
+        title="Unsaved changes"
+        onCancel={discardAndClose}
+        onConfirm={saveAndClose}
+      />
+      <ConfirmDialog
+        cancelLabel="Cancel"
+        confirmLabel="Delete"
+        isOpen={showDeleteDialog}
+        isDangerous
+        message="This action plan will be permanently deleted. This cannot be undone."
+        title="Delete action plan?"
+        onCancel={() => setShowDeleteDialog(false)}
+        onConfirm={handleDelete}
+      />
+      <div className="expanded-panel">
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
+          <ActionPlanSummary actionPlan={actionPlan} variant="header-card" />
+          <div style={{ display: "flex", gap: "0.5rem", marginLeft: "auto" }}>
+            {isAdmin ? (
+              <button
+                className="button button--danger"
+                onClick={() => setShowDeleteDialog(true)}
+                type="button"
               >
-                ▸
-              </span>
-              Revision history ({actionPlan.reschedule_count})
-            </button>
-            {revisionHistoryOpen ? (
-              <div>
-                {actionPlan.target_date_revisions.map((revision) => (
-                  <div
-                    key={revision.id}
-                    style={{
-                      background: "#FAFAFA",
-                      border: "1px solid #F0F0F0",
-                      borderRadius: 4,
-                      marginBottom: 4,
-                      padding: "6px 10px",
-                    }}
-                  >
-                    <strong style={{ color: "var(--text)", display: "block", fontSize: 12 }}>
-                      {formatRevisionDate(revision.old_date)} → {formatRevisionDate(revision.new_date)}
-                    </strong>
-                    <span style={{ color: "var(--text2)", display: "block", fontSize: 12 }}>
-                      {revision.justification}
-                    </span>
-                    <span style={{ color: "var(--text3)", display: "block", fontSize: 10 }}>
-                      Revised by {revision.revised_by.name} on {formatDateTime(revision.revised_at)}
-                    </span>
-                  </div>
-                ))}
-              </div>
+                Delete
+              </button>
             ) : null}
+            <button
+              className="button"
+              onClick={handleCloseRequest}
+              type="button"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+
+        {hasUnsavedChanges ? (
+          <div className="expanded-panel-save-bar">
+            <span>You have unsaved changes</span>
+            <div>
+              <button className="button" disabled={isSaving} onClick={discardChanges} type="button">
+                Discard
+              </button>
+              <button className="button button--primary" disabled={isSaving} onClick={saveChanges} type="button">
+                {isSaving ? "Saving..." : "Save changes"}
+              </button>
+            </div>
           </div>
         ) : null}
 
-        <div className="status-change-pills">
-          {STATUS_ORDER.map((status) => (
-            <button
-              disabled={!canEdit || actionPlan.status === status}
-              key={status}
-              onClick={() =>
-                mutateActionPlan(
-                  actionPlan,
-                  `/api/v1/action-plans/${actionPlan.id}/status`,
-                  { status },
-                  { status },
-                )
-              }
-              style={{ borderColor: STATUS_ACCENTS[status] }}
-              type="button"
-            >
-              {STATUS_LABELS[status]}
-            </button>
-          ))}
-        </div>
-        {actionPlan.status === "Closed" ? (
-          <ClosureDateField disabled={!canEdit} value={actionPlan.closed_at} onSave={saveClosureDate} />
-        ) : null}
+        <div className="expanded-panel__left">
+          <div className="detail-field">
+            <div className="detail-field__label">
+              <span>Action plan</span>
+            </div>
+            <textarea
+              disabled={!canEdit}
+              value={draftDescription}
+              onChange={(event) => setDraftDescription(event.target.value)}
+              rows={5}
+            />
+          </div>
+
+          <div className="detail-field">
+            <div className="detail-field__label">
+              <span>Required evidence</span>
+            </div>
+            <textarea
+              disabled={!canEdit}
+              value={draftRequiredEvidence}
+              onChange={(event) => setDraftRequiredEvidence(event.target.value)}
+              rows={4}
+            />
+          </div>
+
+          <div className="revision-strip">
+            <strong>Target date</strong>
+            <span>
+              Original: {formatDate(actionPlan.original_target_date)} | Current:{" "}
+              {formatDate(actionPlan.current_target_date)}
+            </span>
+            <div className="button-with-tooltip">
+              <button
+                className="button"
+                disabled={!canEdit}
+                onClick={() => setRevisionOpen((current) => !current)}
+                type="button"
+              >
+                Request new target date
+              </button>
+              {!canEdit ? null : (
+                <span className="button-tooltip">
+                  Request a new target date for this action plan. The change will be logged and tracked.
+                </span>
+              )}
+            </div>
+          </div>
+          {revisionOpen ? (
+            <form className="comment-form revision-form" onSubmit={reviseTargetDate}>
+              <input
+                className={revisionErrors.date ? "input-error" : undefined}
+                type="date"
+                value={revisionDate}
+                onChange={(event) => {
+                  setRevisionDate(event.target.value);
+                  setRevisionErrors((current) => ({ ...current, date: "" }));
+                }}
+              />
+              {revisionErrors.date ? <span className="field-error">{revisionErrors.date}</span> : null}
+              <input
+                className={revisionErrors.justification ? "input-error" : undefined}
+                placeholder="Justification"
+                value={revisionJustification}
+                onChange={(event) => {
+                  setRevisionJustification(event.target.value);
+                  setRevisionErrors((current) => ({ ...current, justification: "" }));
+                }}
+              />
+              {revisionErrors.justification ? (
+                <span className="field-error">{revisionErrors.justification}</span>
+              ) : null}
+              <button className="button button--primary" type="submit">
+                Submit revision
+              </button>
+            </form>
+          ) : null}
+          {actionPlan.reschedule_count > 0 ? (
+            <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+              <button
+                onClick={toggleRevisionHistory}
+                style={{
+                  alignItems: "center",
+                  background: "transparent",
+                  border: 0,
+                  color: "var(--text3)",
+                  cursor: "pointer",
+                  display: "inline-flex",
+                  fontSize: 12,
+                  gap: 4,
+                  padding: 0,
+                  width: "fit-content",
+                }}
+                type="button"
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    display: "inline-block",
+                    transform: revisionHistoryOpen ? "rotate(90deg)" : "rotate(0deg)",
+                    transition: "transform 120ms ease",
+                  }}
+                >
+                  ▸
+                </span>
+                Revision history ({actionPlan.reschedule_count})
+              </button>
+              {revisionHistoryOpen ? (
+                <div>
+                  {actionPlan.target_date_revisions.map((revision) => (
+                    <div
+                      key={revision.id}
+                      style={{
+                        background: "#FAFAFA",
+                        border: "1px solid #F0F0F0",
+                        borderRadius: 4,
+                        marginBottom: 4,
+                        padding: "6px 10px",
+                      }}
+                    >
+                      <strong style={{ color: "var(--text)", display: "block", fontSize: 12 }}>
+                        {formatRevisionDate(revision.old_date)} → {formatRevisionDate(revision.new_date)}
+                      </strong>
+                      <span style={{ color: "var(--text2)", display: "block", fontSize: 12 }}>
+                        {revision.justification}
+                      </span>
+                      <span style={{ color: "var(--text3)", display: "block", fontSize: 10 }}>
+                        Revised by {revision.revised_by.name} on {formatDateTime(revision.revised_at)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div className="status-change-pills">
+            {STATUS_ORDER.map((status) => (
+              <button
+                disabled={!canEdit || draftStatus === status}
+                key={status}
+                onClick={() => setDraftStatus(status)}
+                style={{ borderColor: STATUS_ACCENTS[status] }}
+                type="button"
+              >
+                {STATUS_LABELS[status]}
+              </button>
+            ))}
+          </div>
+          {draftStatus === "Closed" ? (
+            <div className="detail-field">
+              <div className="detail-field__label">
+                <span>Closure date</span>
+              </div>
+              <input
+                disabled={!canEdit}
+                max={getTodayInputValue()}
+                type="date"
+                value={formatDateInputValue(draftClosedAt)}
+                onChange={(event) => setDraftClosedAt(event.target.value || null)}
+              />
+            </div>
+          ) : null}
 
         <section className="expanded-section">
           <h3>Evidence</h3>
@@ -2106,6 +2342,7 @@ function ExpandedActionPlan({
 
       </div>
     </div>
+    </>
   );
 }
 

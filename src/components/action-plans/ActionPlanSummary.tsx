@@ -7,6 +7,7 @@ import {
   STATUS_COLORS,
   STATUS_LABELS,
 } from "../../lib/constants";
+import { useState, useRef, useEffect } from "react";
 
 type Status = keyof typeof STATUS_LABELS;
 type Priority = keyof typeof PRIORITY_COLORS;
@@ -21,6 +22,8 @@ type SummaryUser = {
 
 export type ActionPlanSummaryData = {
   display_id: string;
+  title?: string | null;
+  description?: string;
   priority: Priority | null;
   status: Status;
   current_target_date: string | null;
@@ -179,6 +182,106 @@ function EvidencePill({
   return <span className={`summary-evidence-pill summary-evidence-pill--${tone}`}>{count}</span>;
 }
 
+function ActionPlanTitle({
+  displayText,
+  tooltipText,
+  isClosed,
+  shouldShowTooltip,
+}: {
+  displayText: string;
+  tooltipText: string;
+  isClosed: boolean;
+  shouldShowTooltip: boolean;
+}) {
+  const [showTooltip, setShowTooltip] = useState(false);
+  const [tooltipPosition, setTooltipPosition] = useState({ top: 0, left: 0 });
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const titleRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
+
+  function handleMouseEnter() {
+    if (!shouldShowTooltip) return;
+    
+    timeoutRef.current = setTimeout(() => {
+      if (titleRef.current) {
+        const rect = titleRef.current.getBoundingClientRect();
+        const viewportWidth = window.innerWidth;
+        const tooltipMaxWidth = 420;
+        
+        let left = rect.left;
+        if (left + tooltipMaxWidth > viewportWidth - 20) {
+          left = viewportWidth - tooltipMaxWidth - 20;
+        }
+        if (left < 20) {
+          left = 20;
+        }
+
+        setTooltipPosition({
+          top: rect.bottom + 8,
+          left,
+        });
+        setShowTooltip(true);
+      }
+    }, 300);
+  }
+
+  function handleMouseLeave() {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    setShowTooltip(false);
+  }
+
+  return (
+    <>
+      <strong
+        ref={titleRef}
+        className={isClosed ? "action-plan-summary__title action-plan-summary__title--muted" : "action-plan-summary__title"}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        style={{ cursor: shouldShowTooltip ? "help" : "default" }}
+      >
+        {displayText}
+      </strong>
+      {showTooltip && shouldShowTooltip ? (
+        <div
+          style={{
+            position: "fixed",
+            top: tooltipPosition.top,
+            left: tooltipPosition.left,
+            maxWidth: 420,
+            maxHeight: 300,
+            overflowY: "auto",
+            backgroundColor: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: 4,
+            padding: 12,
+            fontSize: 12,
+            lineHeight: 1.5,
+            color: "var(--text)",
+            boxShadow: "0 4px 12px rgba(0, 0, 0, 0.1)",
+            zIndex: 9999,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+          onMouseEnter={() => setShowTooltip(true)}
+          onMouseLeave={handleMouseLeave}
+        >
+          {tooltipText}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 export default function ActionPlanSummary({
   actionPlan,
   variant = "table-row",
@@ -200,6 +303,12 @@ export default function ActionPlanSummary({
   const ownerDepartment =
     owner?.team_l2 ?? owner?.dept_l2 ?? owner?.department ?? actionPlan.department ?? "No department";
 
+  const displayText = actionPlan.title?.trim() 
+    ? actionPlan.title 
+    : (actionPlan.description ?? "").substring(0, 80) + ((actionPlan.description ?? "").length > 80 ? "..." : "");
+  const tooltipText = actionPlan.description ?? "";
+  const shouldShowTooltip = tooltipText.length > 0;
+
   return (
     <div className={`action-plan-summary action-plan-summary--${variant}`}>
       <div className="action-plan-summary__cell action-plan-summary__primary">
@@ -219,9 +328,12 @@ export default function ActionPlanSummary({
             </Chip>
           ) : null}
         </div>
-        <strong className={isClosed ? "action-plan-summary__title action-plan-summary__title--muted" : "action-plan-summary__title"}>
-          {actionPlan.finding?.title ?? "No finding linked"}
-        </strong>
+        <ActionPlanTitle 
+          displayText={displayText} 
+          tooltipText={tooltipText} 
+          isClosed={isClosed}
+          shouldShowTooltip={shouldShowTooltip}
+        />
       </div>
 
       <div

@@ -216,6 +216,7 @@ model action_plans {
   id                              String                            @id @default(uuid()) @db.Uuid
   display_id                      String                            @unique
   finding_id                      String                            @db.Uuid
+  title                           String?
   description                     String                            @db.Text
   priority                        Priority?
   status                          ActionPlanStatus                  @default(NotStarted)

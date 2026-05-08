@@ -52,6 +52,8 @@ export type ClosureKpiResult = {
   overdue_created_in_period: number;
   net_movement: number;
   reschedule_rate: number | null;
+  risk_accepted: number;
+  dropped: number;
 };
 
 export type ClosureKpiRow = ClosureKpiResult & {
@@ -219,6 +221,27 @@ export async function fetchActionPlans(
   });
 }
 
+async function fetchExcludedActionPlans(
+  period: ClosurePeriod,
+  prisma: ClosurePrismaClient,
+  includeOfi: boolean = false,
+): Promise<FetchedActionPlan[]> {
+  const p = resolveClosurePeriod(period);
+
+  return prisma.action_plans.findMany({
+    where: {
+      is_deleted: false,
+      status: { in: [...EXCLUDED_STATUSES] },
+      current_target_date: { gte: p.from, lte: p.to },
+      finding: {
+        finding_type: includeOfi ? undefined : { not: "OpportunityForImprovement" },
+      },
+    },
+    orderBy: { id: "asc" },
+    include: fetchActionPlansInclude(p),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Classification
 // ---------------------------------------------------------------------------
@@ -306,7 +329,11 @@ function roundRate(closed: number, denominator: number): number | null {
 // KPI computation
 // ---------------------------------------------------------------------------
 
-export function computeKpiResult(aps: FetchedActionPlan[], period: ClosurePeriodCanonical): ClosureKpiResult {
+export function computeKpiResult(
+  aps: FetchedActionPlan[],
+  period: ClosurePeriodCanonical,
+  excludedAps: FetchedActionPlan[] = [],
+): ClosureKpiResult {
   let dueInPeriod = 0;
   let overdueBroughtForward = 0;
   let closed = 0;
@@ -335,6 +362,19 @@ export function computeKpiResult(aps: FetchedActionPlan[], period: ClosurePeriod
     }
   }
 
+  let riskAccepted = 0;
+  let dropped = 0;
+
+  for (const ap of excludedAps) {
+    if (isDueInPeriod(ap, period)) {
+      if (ap.status === "RiskAccepted") {
+        riskAccepted += 1;
+      } else if (ap.status === "Dropped") {
+        dropped += 1;
+      }
+    }
+  }
+
   const due = dueInPeriod + overdueBroughtForward;
   const closureRate = roundRate(closed, due);
   const rescheduleRate = dueInPeriod === 0 ? null : Math.round((rescheduleNumerator / dueInPeriod) * 1000) / 10;
@@ -350,6 +390,8 @@ export function computeKpiResult(aps: FetchedActionPlan[], period: ClosurePeriod
     overdue_created_in_period: overdueCreatedInPeriod,
     net_movement: netMovement,
     reschedule_rate: rescheduleRate,
+    risk_accepted: riskAccepted,
+    dropped: dropped,
   };
 }
 
@@ -357,6 +399,7 @@ export function computeKpiRows(
   aps: FetchedActionPlan[],
   dimension: ClosureDimension,
   period: ClosurePeriodCanonical,
+  excludedAps: FetchedActionPlan[] = [],
 ): ClosureKpiRow[] {
   const dimensionValues = new Set<string>();
   for (const ap of aps) {
@@ -364,10 +407,16 @@ export function computeKpiRows(
       dimensionValues.add(value);
     }
   }
+  for (const ap of excludedAps) {
+    for (const value of getDimensionValues(ap, dimension)) {
+      dimensionValues.add(value);
+    }
+  }
 
   const rows: ClosureKpiRow[] = [...dimensionValues].map((dimensionValue) => {
     const slice = aps.filter((ap) => getDimensionValues(ap, dimension).includes(dimensionValue));
-    const base = computeKpiResult(slice, period);
+    const excludedSlice = excludedAps.filter((ap) => getDimensionValues(ap, dimension).includes(dimensionValue));
+    const base = computeKpiResult(slice, period, excludedSlice);
 
     const due_in_period_ids: string[] = [];
     const overdue_brought_forward_ids: string[] = [];
@@ -488,16 +537,17 @@ export async function getAllClosureKpis(
 }> {
   const p = resolveClosurePeriod(period);
   const aps = await fetchActionPlans(period, prisma, includeOfi);
+  const excludedAps = await fetchExcludedActionPlans(period, prisma, includeOfi);
 
   return {
-    overall: computeKpiResult(aps, p),
-    byAuditType: computeKpiRows(aps, "audit_type", p),
-    byAuditName: computeKpiRows(aps, "audit_name", p),
-    byFollowUpAuditor: computeKpiRows(aps, "follow_up_auditor", p),
-    byDepartment: computeKpiRows(aps, "department", p),
-    byTeamL1: computeKpiRows(aps, "team_l1", p),
-    byEntity: computeKpiRows(aps, "entity", p),
-    byPriority: computeKpiRows(aps, "priority", p),
+    overall: computeKpiResult(aps, p, excludedAps),
+    byAuditType: computeKpiRows(aps, "audit_type", p, excludedAps),
+    byAuditName: computeKpiRows(aps, "audit_name", p, excludedAps),
+    byFollowUpAuditor: computeKpiRows(aps, "follow_up_auditor", p, excludedAps),
+    byDepartment: computeKpiRows(aps, "department", p, excludedAps),
+    byTeamL1: computeKpiRows(aps, "team_l1", p, excludedAps),
+    byEntity: computeKpiRows(aps, "entity", p, excludedAps),
+    byPriority: computeKpiRows(aps, "priority", p, excludedAps),
   };
 }
 
@@ -592,7 +642,8 @@ export async function getOverallClosureKpi(
 ): Promise<ClosureKpiLegacyResult> {
   const p = resolveClosurePeriod(period);
   const aps = await fetchActionPlans(period, prisma, includeOfi);
-  const overall = computeKpiResult(aps, p);
+  const excludedAps = await fetchExcludedActionPlans(period, prisma, includeOfi);
+  const overall = computeKpiResult(aps, p, excludedAps);
 
   return {
     due: overall.due,
@@ -609,7 +660,8 @@ export async function getClosureKpiByDimension(
 ): Promise<ClosureKpiLegacyRow[]> {
   const p = resolveClosurePeriod(period);
   const aps = await fetchActionPlans(period, prisma, includeOfi);
-  const rows = computeKpiRows(aps, dimension, p);
+  const excludedAps = await fetchExcludedActionPlans(period, prisma, includeOfi);
+  const rows = computeKpiRows(aps, dimension, p, excludedAps);
 
   return rows.map((row) => ({
     dimension: row.dimension,

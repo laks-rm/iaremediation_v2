@@ -3,8 +3,10 @@ import type { Prisma } from "@prisma/client";
 export type ExtractedActionPlan = {
   reference?: string | null;
   finding_reference?: string | null;
+  title?: string | null;
   description?: string | null;
   priority?: "High" | "Moderate" | "Low" | null;
+  status?: "NotStarted" | "InProgress" | "PendingValidation" | "Closed" | "RiskAccepted" | "Dropped" | null;
   target_date?: string | null;
   entity_ids?: string[];
   entities?: string[];

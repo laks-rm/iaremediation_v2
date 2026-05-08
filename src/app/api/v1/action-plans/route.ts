@@ -9,6 +9,7 @@ import { prisma } from "../../../../lib/db/prisma";
 
 const createActionPlanSchema = z.object({
   finding_id: z.string().uuid(),
+  title: z.string().trim().nullable().optional(),
   description: z.string().trim().min(1),
   priority: z.enum(["High", "Moderate", "Low"]).nullable().optional(),
   original_target_date: z.string().trim().nullable().optional(),
@@ -19,6 +20,7 @@ const createActionPlanSchema = z.object({
   owner_user_id: z.string().uuid().nullable().optional(),
   follow_up_auditor_user_id: z.string().uuid().nullable().optional(),
   created_via: z.enum(["Manual", "Standalone"]).optional().default("Manual"),
+  status: z.enum(["NotStarted", "InProgress", "PendingValidation", "Closed", "RiskAccepted", "Dropped"]).optional().default("NotStarted"),
 });
 
 function getClientIp(request: NextRequest) {
@@ -159,8 +161,10 @@ export async function POST(request: NextRequest) {
         data: {
           display_id: displayId,
           finding_id: parsed.data.finding_id,
+          title: nullableString(parsed.data.title),
           description: parsed.data.description,
           priority: parsed.data.priority as Priority | null | undefined,
+          status: parsed.data.status as "NotStarted" | "InProgress" | "PendingValidation" | "Closed" | "RiskAccepted" | "Dropped",
           original_target_date: parseNullableDate(parsed.data.original_target_date),
           current_target_date: parseNullableDate(parsed.data.current_target_date),
           required_evidence: nullableString(parsed.data.required_evidence),

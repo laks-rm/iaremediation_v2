@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import AppLayout from "../../components/AppLayout";
+import ConfirmDialog from "../../components/ConfirmDialog";
 import EmptyState from "../../components/EmptyState";
 import { useToast } from "../../components/Toast";
 import { AUDIT_TYPE_LABELS, OPINION_RATING_LABELS } from "../../lib/constants";
@@ -84,6 +85,8 @@ export default function AuditsPage() {
   const [year, setYear] = useState("");
   const [myAudits, setMyAudits] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [deleteAuditId, setDeleteAuditId] = useState("");
 
   const loadAudits = useCallback(() => {
     let isMounted = true;
@@ -126,6 +129,7 @@ export default function AuditsPage() {
       if (session?.user?.id) {
         setCurrentUserId(session.user.id);
       }
+      setIsAdmin(session?.user?.is_admin === true);
     });
   }, []);
 
@@ -185,6 +189,23 @@ export default function AuditsPage() {
     } catch {
       toast.error("Unable to start export.");
       setIsExporting(false);
+    }
+  }
+
+  async function deleteAudit() {
+    if (!deleteAuditId) return;
+    try {
+      const response = await fetch(`/api/v1/audits/${deleteAuditId}`, { method: "DELETE" });
+      const body = await readResponseBody(response);
+      if (!response.ok) {
+        throw new Error(responseError(body, "Unable to delete audit."));
+      }
+      toast.success("Audit deleted successfully");
+      setDeleteAuditId("");
+      await loadAudits();
+    } catch (caughtError) {
+      toast.error(caughtError instanceof Error ? caughtError.message : "Unable to delete audit.");
+      setDeleteAuditId("");
     }
   }
 
@@ -319,6 +340,20 @@ export default function AuditsPage() {
                     </span>
                     <span className="audits-action">View →</span>
                   </Link>
+                  {isAdmin ? (
+                    <button
+                      className="audits-row-delete"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setDeleteAuditId(audit.id);
+                      }}
+                      title="Delete this audit"
+                      type="button"
+                    >
+                      Delete
+                    </button>
+                  ) : null}
                   <button
                     className="audits-row-copy-link"
                     onClick={async (event) => {
@@ -338,6 +373,25 @@ export default function AuditsPage() {
               : null}
           </div>
         </section>
+        <ConfirmDialog
+          cancelLabel="Cancel"
+          confirmLabel="Delete Audit"
+          isDangerous
+          isOpen={Boolean(deleteAuditId)}
+          message={
+            deleteAuditId
+              ? (() => {
+                  const audit = audits.find((a) => a.id === deleteAuditId);
+                  return audit
+                    ? `Delete this audit report, its ${audit.finding_count} finding(s), and ${audit.action_plan_count} action plan(s)? This cannot be undone.`
+                    : "Delete this audit? This cannot be undone.";
+                })()
+              : ""
+          }
+          title="Delete audit?"
+          onCancel={() => setDeleteAuditId("")}
+          onConfirm={deleteAudit}
+        />
       </div>
     </AppLayout>
   );

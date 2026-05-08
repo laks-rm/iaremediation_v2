@@ -207,11 +207,27 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 export async function DELETE(request: NextRequest, context: RouteContext) {
   try {
     const currentUser = await requireRole(["AuditTeam"]);
+    if (!currentUser.is_admin) {
+      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+    }
+
     const { id } = await context.params;
     const existing = await prisma.audits.findFirst({
       where: {
         id,
         is_deleted: false,
+      },
+      include: {
+        findings: {
+          where: { is_deleted: false },
+          select: {
+            id: true,
+            action_plans: {
+              where: { is_deleted: false },
+              select: { id: true },
+            },
+          },
+        },
       },
     });
 
@@ -219,14 +235,36 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    const updated = await prisma.audits.update({
-      where: {
-        id,
-      },
-      data: {
-        is_deleted: true,
-      },
-    });
+    const findingIds = existing.findings.map((f) => f.id);
+    const actionPlanCount = existing.findings.reduce((sum, f) => sum + f.action_plans.length, 0);
+
+    // Soft delete the audit, all findings, and all action plans
+    await prisma.$transaction([
+      prisma.action_plans.updateMany({
+        where: {
+          finding_id: { in: findingIds },
+          is_deleted: false,
+        },
+        data: {
+          is_deleted: true,
+        },
+      }),
+      prisma.findings.updateMany({
+        where: {
+          audit_id: id,
+          is_deleted: false,
+        },
+        data: {
+          is_deleted: true,
+        },
+      }),
+      prisma.audits.update({
+        where: { id },
+        data: {
+          is_deleted: true,
+        },
+      }),
+    ]);
 
     await writeAuditLog({
       userId: currentUser.id,
@@ -234,11 +272,15 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       entityType: "audits",
       entityId: id,
       beforeJson: toAuditJson(existing),
-      afterJson: toAuditJson(updated),
+      afterJson: toAuditJson({ ...existing, is_deleted: true }),
       ipAddress: getClientIp(request),
     });
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({
+      success: true,
+      findings_deleted: existing.findings.length,
+      action_plans_deleted: actionPlanCount,
+    });
   } catch (error) {
     if (error instanceof AuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
