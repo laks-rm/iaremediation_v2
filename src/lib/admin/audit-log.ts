@@ -213,7 +213,7 @@ function getEntityHref(entry: AuditLogRecord) {
   }
 
   if (["ActionPlan", "action_plans", "Action Plan"].includes(entry.entity_type)) {
-    return `/action-plans/${entry.entity_id}`;
+    return `/action-plans?expand=${entry.entity_id}`;
   }
 
   if (["Audit", "audits"].includes(entry.entity_type)) {

@@ -204,6 +204,7 @@ function ActionPlansPageContent() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const showDashboardBackLink = searchParams.has("ids");
+  const expandActionPlanId = searchParams.get("expand");
   const [user, setUser] = useState<DashboardUser | null>(null);
   const [data, setData] = useState<ActionPlanTableData>(emptyData);
   const [filters, setFilters] = useState<Filters>(() =>
@@ -401,6 +402,7 @@ function ActionPlansPageContent() {
           totalUnfiltered={data.total_unfiltered}
           user={user}
           userOptions={userOptions}
+          initialExpandedId={expandActionPlanId}
         />
       </div>
     </AppLayout>

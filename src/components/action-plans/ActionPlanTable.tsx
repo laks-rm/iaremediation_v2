@@ -248,6 +248,7 @@ export type ActionPlanTableProps = {
   onFilter?: (filters: Partial<Filters>) => void;
   sortBy: SortBy | null;
   sortDir: "asc" | "desc" | null;
+  initialExpandedId?: string | null;
 };
 
 const PAGE_SIZE = 50;
@@ -619,13 +620,36 @@ export default function ActionPlanTable({
   showOverdueToggle = true,
   sortBy,
   sortDir,
+  initialExpandedId,
 }: ActionPlanTableProps) {
   const toast = useToast();
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const refreshTimerRef = useRef<number | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => {
+    // Auto-expand action plan if initialExpandedId is provided
+    return initialExpandedId ? new Set([initialExpandedId]) : new Set();
+  });
   const [auditLogOpenIds, setAuditLogOpenIds] = useState<Set<string>>(new Set());
   const [auditLogs, setAuditLogs] = useState<Record<string, AuditLogEntry[]>>({});
   const [revisionHistoryOpen, setRevisionHistoryOpen] = useState<Record<string, boolean>>({});
   const [visibleLimit, setVisibleLimit] = useState(PAGE_SIZE);
+
+  function scheduleRefresh() {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+    }
+    refreshTimerRef.current = window.setTimeout(
+      onRefresh, 
+      5000
+    );
+  }
+
+  useEffect(() => {
+    return () => {
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     setVisibleLimit(PAGE_SIZE);
@@ -749,12 +773,12 @@ export default function ActionPlanTable({
 
   function patchActionPlanLocal(actionPlanId: string, patch: Partial<DashboardActionPlan>) {
     onPatchActionPlan(actionPlanId, patch);
-    window.setTimeout(onRefresh, 5000);
+    scheduleRefresh();
   }
 
   function addCommentLocal(actionPlanId: string, createdComment: DashboardComment) {
     onAddComment(actionPlanId, createdComment);
-    window.setTimeout(onRefresh, 5000);
+    scheduleRefresh();
   }
 
   async function mutateActionPlan(
@@ -788,6 +812,11 @@ export default function ActionPlanTable({
       toast.success("Target date revised.");
     }
     patchActionPlanLocal(actionPlan.id, localPatch);
+    
+    // Reload audit log if it's currently open for this action plan
+    if (auditLogOpenIds.has(actionPlan.id)) {
+      await forceReloadAuditLog(actionPlan);
+    }
   }
 
   async function loadAuditLog(actionPlan: DashboardActionPlan) {
@@ -814,6 +843,17 @@ export default function ActionPlanTable({
         : [];
 
     setAuditLogs((current) => ({ ...current, [actionPlan.id]: records }));
+  }
+
+  async function forceReloadAuditLog(
+    actionPlan: DashboardActionPlan
+  ) {
+    setAuditLogs((current) => {
+      const updated = { ...current };
+      delete updated[actionPlan.id];
+      return updated;
+    });
+    await loadAuditLog(actionPlan);
   }
 
   return (
@@ -924,6 +964,7 @@ export default function ActionPlanTable({
                 expandedIds={expandedIds}
                 key={auditName}
                 loadAuditLog={loadAuditLog}
+                forceReloadAuditLog={forceReloadAuditLog}
                 mutateActionPlan={mutateActionPlan}
                 patchActionPlanLocal={patchActionPlanLocal}
                 refreshActionPlans={onRefresh}
@@ -951,6 +992,7 @@ export default function ActionPlanTable({
             auditLogOpenIds={auditLogOpenIds}
             expandedIds={expandedIds}
             loadAuditLog={loadAuditLog}
+            forceReloadAuditLog={forceReloadAuditLog}
             mutateActionPlan={mutateActionPlan}
             patchActionPlanLocal={patchActionPlanLocal}
             refreshActionPlans={onRefresh}
@@ -1024,6 +1066,7 @@ function ActionPlanRows({
   patchActionPlanLocal,
   refreshActionPlans,
   loadAuditLog,
+  forceReloadAuditLog,
   auditLogOpenIds,
   auditLogs,
   revisionHistoryOpen,
@@ -1050,6 +1093,7 @@ function ActionPlanRows({
   patchActionPlanLocal: (actionPlanId: string, patch: Partial<DashboardActionPlan>) => void;
   refreshActionPlans: () => Promise<void>;
   loadAuditLog: (actionPlan: DashboardActionPlan) => Promise<void>;
+  forceReloadAuditLog: (actionPlan: DashboardActionPlan) => Promise<void>;
   auditLogOpenIds: Set<string>;
   auditLogs: Record<string, AuditLogEntry[]>;
   revisionHistoryOpen: Record<string, boolean>;
@@ -1367,7 +1411,7 @@ function ActionPlanRows({
                   className="dashboard-row-copy-link"
                   onClick={async (event) => {
                     event.stopPropagation();
-                    const url = `${window.location.origin}/action-plans/${actionPlan.id}`;
+                    const url = `${window.location.origin}/action-plans?expand=${actionPlan.id}`;
                     await navigator.clipboard.writeText(url);
                     toast.success("Link copied!");
                   }}
@@ -1389,6 +1433,7 @@ function ActionPlanRows({
                 canManageAssignments={user?.role === "AuditTeam"}
                 addCommentLocal={addCommentLocal}
                 loadAuditLog={loadAuditLog}
+                forceReloadAuditLog={forceReloadAuditLog}
                 mutateActionPlan={mutateActionPlan}
                 patchActionPlanLocal={patchActionPlanLocal}
                 refreshActionPlans={refreshActionPlans}
@@ -1425,6 +1470,7 @@ function ExpandedActionPlan({
   patchActionPlanLocal,
   refreshActionPlans,
   loadAuditLog,
+  forceReloadAuditLog,
   auditLogOpen,
   auditLogs,
   revisionHistoryOpen,
@@ -1447,6 +1493,7 @@ function ExpandedActionPlan({
   patchActionPlanLocal: (actionPlanId: string, patch: Partial<DashboardActionPlan>) => void;
   refreshActionPlans: () => Promise<void>;
   loadAuditLog: (actionPlan: DashboardActionPlan) => Promise<void>;
+  forceReloadAuditLog: (actionPlan: DashboardActionPlan) => Promise<void>;
   auditLogOpen: boolean;
   auditLogs: AuditLogEntry[];
   revisionHistoryOpen: boolean;
@@ -1467,6 +1514,8 @@ function ExpandedActionPlan({
   const [analysisErrors, setAnalysisErrors] = useState<Record<string, string>>({});
   const [analysisSavedIds, setAnalysisSavedIds] = useState<Set<string>>(new Set());
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [assigningType, setAssigningType] = useState<"owner" | "auditor" | null>(null);
+  const [localAuditLogOpen, setLocalAuditLogOpen] = useState(auditLogOpen);
   const evidenceInputRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
   const audit = actionPlan.finding?.audit ?? null;
@@ -1518,6 +1567,18 @@ function ExpandedActionPlan({
     setDraftClosureRemarks(actionPlan.closure_remarks ?? "");
   }, [actionPlan]);
 
+  // Auto-set closure date to today when status changes to "Closed" or "RiskAccepted"
+  useEffect(() => {
+    if ((draftStatus === "Closed" || draftStatus === "RiskAccepted") && !draftClosedAt) {
+      setDraftClosedAt(getTodayInputValue());
+    }
+  }, [draftStatus, draftClosedAt]);
+
+  // Sync localAuditLogOpen with auditLogOpen prop when action plan changes
+  useEffect(() => {
+    setLocalAuditLogOpen(auditLogOpen);
+  }, [auditLogOpen, actionPlan.id]);
+
   function discardChanges() {
     setDraftDescription(actionPlan.description);
     setDraftRequiredEvidence(actionPlan.required_evidence ?? "");
@@ -1528,8 +1589,28 @@ function ExpandedActionPlan({
     setDraftClosureRemarks(actionPlan.closure_remarks ?? "");
   }
 
+  async function postMutationAuditLogSync(
+    actionPlan: DashboardActionPlan
+  ) {
+    const isOpen =
+      auditLogOpen ||
+      localAuditLogOpen;
+    if (isOpen) {
+      await forceReloadAuditLog(actionPlan);
+    }
+  }
+
   async function saveChanges() {
     setIsSaving(true);
+    const savedValues = {
+      description: draftDescription,
+      required_evidence: draftRequiredEvidence || null,
+      status: draftStatus,
+      closed_at: draftClosedAt,
+      priority: draftPriority,
+      title: draftTitle || null,
+      closure_remarks: draftClosureRemarks || null,
+    };
     try {
       // Build the patch payload for the main action plan fields
       const patch: Record<string, unknown> = {};
@@ -1571,15 +1652,21 @@ function ExpandedActionPlan({
       }
 
       // Update local state with all changes
-      patchActionPlanLocal(actionPlan.id, {
-        description: draftDescription,
-        required_evidence: draftRequiredEvidence || null,
-        status: draftStatus,
-        closed_at: draftClosedAt,
-        priority: draftPriority,
-        title: draftTitle || null,
-        closure_remarks: draftClosureRemarks || null,
-      });
+      patchActionPlanLocal(actionPlan.id, savedValues);
+      setDraftDescription(savedValues.description);
+      setDraftRequiredEvidence(
+        savedValues.required_evidence ?? ""
+      );
+      setDraftStatus(savedValues.status);
+      setDraftClosedAt(savedValues.closed_at);
+      setDraftPriority(savedValues.priority);
+      setDraftTitle(savedValues.title ?? "");
+      setDraftClosureRemarks(
+        savedValues.closure_remarks ?? ""
+      );
+
+      // Reload audit log if it's currently open
+      await postMutationAuditLogSync(actionPlan);
 
       toast.success("Changes saved successfully");
     } catch (error) {
@@ -1668,7 +1755,18 @@ function ExpandedActionPlan({
 
     toast.success("Evidence uploaded.");
     if (evidenceInputRef.current) evidenceInputRef.current.value = "";
-    await refreshActionPlans();
+    
+    // Update local state with new evidence
+    if (body && typeof body === "object" && "evidence" in body) {
+      const newEvidence = body.evidence as DashboardEvidence;
+      patchActionPlanLocal(actionPlan.id, {
+        evidence: [...actionPlan.evidence, newEvidence],
+        evidence_count: actionPlan.evidence_count + 1,
+      });
+    }
+
+    // Reload audit log if it's currently open
+    await postMutationAuditLogSync(actionPlan);
   }
 
   async function addComment(event: FormEvent<HTMLFormElement>) {
@@ -1682,6 +1780,9 @@ function ExpandedActionPlan({
     if (createdComment) {
       addCommentLocal(actionPlan.id, createdComment);
       setComment("");
+
+      // Reload audit log if it's currently open
+      await postMutationAuditLogSync(actionPlan);
     }
   }
 
@@ -1810,6 +1911,9 @@ function ExpandedActionPlan({
         },
       ],
     });
+
+    // Reload audit log if it's currently open
+    await postMutationAuditLogSync(actionPlan);
   }
 
   async function removeOwner(userId: string) {
@@ -1827,6 +1931,9 @@ function ExpandedActionPlan({
     patchActionPlanLocal(actionPlan.id, {
       action_plan_owners: actionPlan.action_plan_owners.filter((owner) => owner.user.id !== userId),
     });
+
+    // Reload audit log if it's currently open
+    await postMutationAuditLogSync(actionPlan);
   }
 
   async function assignFollowUpAuditor(userId: string) {
@@ -1860,6 +1967,9 @@ function ExpandedActionPlan({
         },
       ],
     });
+
+    // Reload audit log if it's currently open
+    await postMutationAuditLogSync(actionPlan);
   }
 
   async function removeFollowUpAuditor(userId: string) {
@@ -1879,6 +1989,9 @@ function ExpandedActionPlan({
         (auditor) => auditor.user.id !== userId,
       ),
     });
+
+    // Reload audit log if it's currently open
+    await postMutationAuditLogSync(actionPlan);
   }
 
   function setErrorFromBody(body: unknown, fallback: string) {
@@ -1900,9 +2013,7 @@ function ExpandedActionPlan({
 
     const updated = body as { action_plan: DashboardActionPlan };
     patchActionPlanLocal(actionPlan.id, { closed_at: updated.action_plan.closed_at });
-    if (auditLogOpen) {
-      await loadAuditLog(actionPlan);
-    }
+    await postMutationAuditLogSync(actionPlan);
     toast.success("Closure date updated");
     return true;
   }
@@ -1930,51 +2041,246 @@ function ExpandedActionPlan({
       />
       <div className="expanded-panel">
         <div className="expanded-panel__header">
-          <ActionPlanSummary actionPlan={actionPlan} variant="header-card" />
-          <div style={{ display: "flex", gap: "0.5rem", marginLeft: "auto" }}>
-            <button
-              className="button"
-              onClick={async () => {
-                const url = `${window.location.origin}/action-plans/${actionPlan.id}`;
-                await navigator.clipboard.writeText(url);
-                toast.success("Link copied!");
-              }}
-              title="Copy link to this action plan"
-              type="button"
-            >
-              🔗 Copy Link
-            </button>
-            {isAdmin ? (
-              <button
-                className="button button--danger"
-                onClick={() => setShowDeleteDialog(true)}
-                type="button"
-              >
-                Delete
-              </button>
-            ) : null}
-            <button
-              className="button"
-              onClick={handleCloseRequest}
-              type="button"
-            >
-              Close
-            </button>
-          </div>
-        </div>
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              borderRadius: "999px",
+              padding: "3px 10px",
+              background: "var(--surface2)",
+              color: "var(--text3)",
+              fontSize: "11px",
+              fontWeight: "700",
+            }}
+          >
+            {actionPlan.display_id}
+          </span>
 
-        {hasUnsavedChanges ? (
-          <div className="expanded-panel-save-bar">
-            <span>You have unsaved changes</span>
-            <div>
-              <button className="button" disabled={isSaving} onClick={discardChanges} type="button">
-                Discard
-              </button>
-              <button className="button button--primary" disabled={isSaving} onClick={saveChanges} type="button">
-                {isSaving ? "Saving..." : "Save changes"}
+          <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", fontWeight: "600" }}>
+            <span style={{ color: "var(--text3)" }}>Status</span>
+            <select
+              disabled={!canEdit}
+              value={draftStatus}
+              onChange={(event) => setDraftStatus(event.target.value as Status)}
+              style={{
+                border: `2px solid ${STATUS_ACCENTS[draftStatus]}`,
+                borderRadius: "8px",
+                padding: "6px 10px",
+                background: "var(--surface)",
+                color: "var(--text)",
+                fontSize: "13px",
+                fontWeight: "600",
+              }}
+            >
+              {STATUS_ORDER.map((status) => (
+                <option key={status} value={status}>
+                  {STATUS_LABELS[status]}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {draftStatus !== "RiskAccepted" && draftStatus !== "Dropped" ? (
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", flexWrap: "wrap" }}>
+              <span style={{ color: "var(--text3)", fontWeight: "600", fontSize: "11px" }}>
+                Original: {formatDate(actionPlan.original_target_date)} | Current: {formatDate(actionPlan.current_target_date)}
+              </span>
+              {actionPlan.reschedule_count > 0 ? (
+                <span
+                  style={{
+                    padding: "2px 7px",
+                    borderRadius: "999px",
+                    background: "#fef3c7",
+                    color: "#92400e",
+                    fontSize: "10px",
+                    fontWeight: "700",
+                  }}
+                >
+                  Rescheduled ×{actionPlan.reschedule_count}
+                </span>
+              ) : null}
+              {actionPlan.is_overdue ? (
+                <span style={{ color: "var(--red)", fontSize: "11px", fontWeight: "700" }}>
+                  (Overdue {actionPlan.days_overdue}d)
+                </span>
+              ) : null}
+              <button
+                className="button"
+                disabled={!canEdit}
+                onClick={() => setRevisionOpen((current) => !current)}
+                type="button"
+                style={{ fontSize: "11px", padding: "4px 8px" }}
+              >
+                {revisionOpen ? "Cancel" : "Reschedule"}
               </button>
             </div>
-          </div>
+          ) : null}
+
+          {draftStatus === "Closed" || draftStatus === "Dropped" || draftStatus === "RiskAccepted" ? (
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px" }}>
+              {draftStatus === "Closed" || draftStatus === "RiskAccepted" ? (
+                <>
+                  <span style={{ color: "var(--text3)", fontWeight: "600", fontSize: "12px" }}>
+                    Date of closure
+                  </span>
+                  {actionPlan.status === draftStatus && actionPlan.closed_at && draftClosedAt === actionPlan.closed_at ? (
+                    <span style={{ color: "var(--text)", fontWeight: "600", fontSize: "12px" }}>
+                      {formatDate(actionPlan.closed_at)}
+                    </span>
+                  ) : (
+                    <input
+                      type="date"
+                      max={getTodayInputValue()}
+                      value={formatDateInputValue(draftClosedAt) || getTodayInputValue()}
+                      onChange={(event) => setDraftClosedAt(event.target.value || null)}
+                      disabled={!canEdit}
+                      style={{
+                        border: "1px solid var(--border2)",
+                        borderRadius: "6px",
+                        padding: "4px 8px",
+                        background: "var(--surface)",
+                        color: "var(--text)",
+                        fontSize: "12px",
+                        fontWeight: "600",
+                      }}
+                    />
+                  )}
+                </>
+              ) : (
+                <>
+                  <span style={{ color: "var(--text3)", fontWeight: "600", fontSize: "12px" }}>
+                    Date of closure
+                  </span>
+                  <span style={{ color: "var(--text3)", fontSize: "12px", fontWeight: "500" }}>
+                    N/A
+                  </span>
+                </>
+              )}
+            </div>
+          ) : null}
+
+          <div style={{ flex: 1 }} />
+
+          <button
+            className="button"
+            onClick={async () => {
+              const url = `${window.location.origin}/action-plans?expand=${actionPlan.id}`;
+              await navigator.clipboard.writeText(url);
+              toast.success("Link copied!");
+            }}
+            title="Copy link to this action plan"
+            type="button"
+            style={{ fontSize: "18px", padding: "6px 10px" }}
+          >
+            🔗
+          </button>
+          {isAdmin ? (
+            <button
+              className="button button--danger"
+              onClick={() => setShowDeleteDialog(true)}
+              type="button"
+              style={{ fontSize: "13px", padding: "6px 12px" }}
+            >
+              Delete
+            </button>
+          ) : null}
+          <button
+            className="button"
+            onClick={handleCloseRequest}
+            type="button"
+            style={{ fontSize: "13px", padding: "6px 12px" }}
+          >
+            Close
+          </button>
+        </div>
+
+        {revisionOpen ? (
+          <form
+            onSubmit={reviseTargetDate}
+            style={{
+              gridColumn: "1 / -1",
+              display: "grid",
+              gridTemplateColumns: "200px 1fr auto auto",
+              gap: "12px",
+              alignItems: "start",
+              padding: "12px 16px",
+              background: "var(--surface2)",
+              borderBottom: "1px solid var(--border)",
+            }}
+          >
+            <div style={{ display: "grid", gap: "4px" }}>
+              <label style={{ fontSize: "11px", fontWeight: "600", color: "var(--text3)" }}>
+                New target date
+              </label>
+              <input
+                type="date"
+                value={revisionDate}
+                onChange={(event) => {
+                  setRevisionDate(event.target.value);
+                  setRevisionErrors((current) => ({ ...current, date: "" }));
+                }}
+                style={{
+                  border: revisionErrors.date ? "1px solid var(--red)" : "1px solid var(--border2)",
+                  borderRadius: "8px",
+                  padding: "6px 10px",
+                  fontSize: "12px",
+                }}
+              />
+              {revisionErrors.date ? (
+                <span style={{ fontSize: "10px", color: "var(--red)", fontWeight: "600" }}>
+                  {revisionErrors.date}
+                </span>
+              ) : null}
+            </div>
+
+            <div style={{ display: "grid", gap: "4px" }}>
+              <label style={{ fontSize: "11px", fontWeight: "600", color: "var(--text3)" }}>
+                Justification
+              </label>
+              <input
+                type="text"
+                placeholder="Why is this date being changed?"
+                value={revisionJustification}
+                onChange={(event) => {
+                  setRevisionJustification(event.target.value);
+                  setRevisionErrors((current) => ({ ...current, justification: "" }));
+                }}
+                style={{
+                  border: revisionErrors.justification ? "1px solid var(--red)" : "1px solid var(--border2)",
+                  borderRadius: "8px",
+                  padding: "6px 10px",
+                  fontSize: "12px",
+                }}
+              />
+              {revisionErrors.justification ? (
+                <span style={{ fontSize: "10px", color: "var(--red)", fontWeight: "600" }}>
+                  {revisionErrors.justification}
+                </span>
+              ) : null}
+            </div>
+
+            <button
+              className="button button--primary"
+              type="submit"
+              style={{ fontSize: "12px", padding: "7px 14px", marginTop: "17px" }}
+            >
+              Submit
+            </button>
+
+            <button
+              className="button"
+              type="button"
+              onClick={() => {
+                setRevisionOpen(false);
+                setRevisionDate("");
+                setRevisionJustification("");
+                setRevisionErrors({});
+              }}
+              style={{ fontSize: "12px", padding: "7px 14px", marginTop: "17px" }}
+            >
+              Cancel
+            </button>
+          </form>
         ) : null}
 
         <div className="expanded-panel__left">
@@ -1986,164 +2292,59 @@ function ExpandedActionPlan({
               disabled={!canEdit}
               value={draftDescription}
               onChange={(event) => setDraftDescription(event.target.value)}
-              rows={8}
+              style={{ minHeight: "80px", resize: "vertical" }}
             />
           </div>
 
-          <div className="detail-field">
-            <div className="detail-field__label">
-              <span>Required evidence</span>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", alignItems: "start" }}>
+            <div
+              onClick={() => !canEdit ? null : evidenceInputRef.current?.click()}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                height: "72px",
+                border: "2px dashed var(--border2)",
+                borderRadius: "12px",
+                background: "var(--surface)",
+                cursor: canEdit ? "pointer" : "not-allowed",
+                gap: "6px",
+                opacity: canEdit ? 1 : 0.6,
+              }}
+            >
+              <span style={{ fontSize: "20px" }}>📎</span>
+              <span style={{ fontSize: "11px", color: "var(--text3)", fontWeight: "600" }}>
+                Upload evidence
+              </span>
             </div>
-            <textarea
-              disabled={!canEdit}
-              value={draftRequiredEvidence}
-              onChange={(event) => setDraftRequiredEvidence(event.target.value)}
-              rows={6}
-            />
-          </div>
 
-          <div className="revision-strip">
-            <strong>Target date</strong>
-            <span>
-              Original: {formatDate(actionPlan.original_target_date)} | Current:{" "}
-              {formatDate(actionPlan.current_target_date)}
-            </span>
-            <div className="button-with-tooltip">
-              <button
-                className="button"
+            <div style={{ height: "72px", display: "flex", flexDirection: "column" }}>
+              <label style={{ fontSize: "11px", fontWeight: "600", color: "var(--text2)", marginBottom: "4px" }}>
+                Required evidence
+              </label>
+              <textarea
                 disabled={!canEdit}
-                onClick={() => setRevisionOpen((current) => !current)}
-                type="button"
-              >
-                Request new target date
-              </button>
-              {!canEdit ? null : (
-                <span className="button-tooltip">
-                  Request a new target date for this action plan. The change will be logged and tracked.
-                </span>
-              )}
+                value={draftRequiredEvidence}
+                onChange={(event) => setDraftRequiredEvidence(event.target.value)}
+                style={{ flex: 1, minHeight: 0, resize: "none" }}
+              />
             </div>
           </div>
-          {revisionOpen ? (
-            <form className="comment-form revision-form" onSubmit={reviseTargetDate}>
-              <input
-                className={revisionErrors.date ? "input-error" : undefined}
-                type="date"
-                value={revisionDate}
-                onChange={(event) => {
-                  setRevisionDate(event.target.value);
-                  setRevisionErrors((current) => ({ ...current, date: "" }));
-                }}
-              />
-              {revisionErrors.date ? <span className="field-error">{revisionErrors.date}</span> : null}
-              <input
-                className={revisionErrors.justification ? "input-error" : undefined}
-                placeholder="Justification"
-                value={revisionJustification}
-                onChange={(event) => {
-                  setRevisionJustification(event.target.value);
-                  setRevisionErrors((current) => ({ ...current, justification: "" }));
-                }}
-              />
-              {revisionErrors.justification ? (
-                <span className="field-error">{revisionErrors.justification}</span>
-              ) : null}
-              <button className="button button--primary" type="submit">
-                Submit revision
-              </button>
-            </form>
-          ) : null}
-          {actionPlan.reschedule_count > 0 ? (
-            <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
-              <button
-                onClick={toggleRevisionHistory}
-                style={{
-                  alignItems: "center",
-                  background: "transparent",
-                  border: 0,
-                  color: "var(--text3)",
-                  cursor: "pointer",
-                  display: "inline-flex",
-                  fontSize: 12,
-                  gap: 4,
-                  padding: 0,
-                  width: "fit-content",
-                }}
-                type="button"
-              >
-                <span
-                  aria-hidden="true"
-                  style={{
-                    display: "inline-block",
-                    transform: revisionHistoryOpen ? "rotate(90deg)" : "rotate(0deg)",
-                    transition: "transform 120ms ease",
-                  }}
-                >
-                  ▸
-                </span>
-                Revision history ({actionPlan.reschedule_count})
-              </button>
-              {revisionHistoryOpen ? (
-                <div>
-                  {actionPlan.target_date_revisions.map((revision) => (
-                    <div
-                      key={revision.id}
-                      style={{
-                        background: "#FAFAFA",
-                        border: "1px solid #F0F0F0",
-                        borderRadius: 4,
-                        marginBottom: 4,
-                        padding: "6px 10px",
-                      }}
-                    >
-                      <strong style={{ color: "var(--text)", display: "block", fontSize: 12 }}>
-                        {formatRevisionDate(revision.old_date)} → {formatRevisionDate(revision.new_date)}
-                      </strong>
-                      <span style={{ color: "var(--text2)", display: "block", fontSize: 12 }}>
-                        {revision.justification}
-                      </span>
-                      <span style={{ color: "var(--text3)", display: "block", fontSize: 10 }}>
-                        Revised by {revision.revised_by.name} on {formatDateTime(revision.revised_at)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
 
-          <div className="status-change-pills">
-            {STATUS_ORDER.map((status) => (
-              <button
-                disabled={!canEdit || draftStatus === status}
-                key={status}
-                onClick={() => setDraftStatus(status)}
-                style={{ borderColor: STATUS_ACCENTS[status] }}
-                type="button"
-              >
-                {STATUS_LABELS[status]}
-              </button>
-            ))}
-          </div>
-          {draftStatus === "Closed" ? (
-            <div className="detail-field">
-              <div className="detail-field__label">
-                <span>Closure date</span>
-              </div>
-              <input
-                disabled={!canEdit}
-                max={getTodayInputValue()}
-                type="date"
-                value={formatDateInputValue(draftClosedAt)}
-                onChange={(event) => setDraftClosedAt(event.target.value || null)}
-              />
-            </div>
-          ) : null}
+          <input
+            hidden
+            ref={evidenceInputRef}
+            type="file"
+            onChange={(event) => uploadEvidence(event.target.files?.[0])}
+          />
+          {evidenceError ? <span className="field-error">{evidenceError}</span> : null}
 
-        <section className="expanded-section">
-          <h3>Evidence</h3>
           {actionPlan.evidence.length > 0 ? (
             <div style={{ display: "grid", gap: 8 }}>
+              <strong style={{ fontSize: "13px", fontWeight: "700", color: "var(--text2)" }}>
+                Uploaded Evidence
+              </strong>
               {actionPlan.evidence.map((evidence) => (
                 <div key={evidence.id}>
                   <div
@@ -2229,20 +2430,7 @@ function ExpandedActionPlan({
                 </div>
               ))}
             </div>
-          ) : (
-            <EmptyState title="No evidence yet" subtitle="Evidence files uploaded for this action plan will appear here." />
-          )}
-          <input
-            hidden
-            ref={evidenceInputRef}
-            type="file"
-            onChange={(event) => uploadEvidence(event.target.files?.[0])}
-          />
-          <button className="button" disabled={!canEdit} onClick={() => evidenceInputRef.current?.click()} type="button">
-            Upload evidence
-          </button>
-          {evidenceError ? <span className="field-error">{evidenceError}</span> : null}
-        </section>
+          ) : null}
 
         <section className="expanded-section">
           <h3>Comments</h3>
@@ -2277,10 +2465,21 @@ function ExpandedActionPlan({
         </section>
 
         <section className="expanded-section">
-          <button className="audit-log-toggle" onClick={() => loadAuditLog(actionPlan)} type="button">
-            {auditLogOpen ? "Audit log" : "Show audit log"}
+          <button
+            className="audit-log-toggle"
+            onClick={() => {
+              if (localAuditLogOpen) {
+                setLocalAuditLogOpen(false);
+              } else {
+                loadAuditLog(actionPlan);
+                setLocalAuditLogOpen(true);
+              }
+            }}
+            type="button"
+          >
+            {localAuditLogOpen ? "Hide audit log" : "Show audit log"}
           </button>
-          {auditLogOpen ? (
+          {localAuditLogOpen ? (
             auditLogs.length > 0 ? (
               <AuditLogTimeline entries={auditLogs} />
             ) : (
@@ -2288,6 +2487,24 @@ function ExpandedActionPlan({
             )
           ) : null}
         </section>
+
+        <div style={{ borderTop: "1px solid var(--border)", paddingTop: "14px", marginTop: "8px" }}>
+          {hasUnsavedChanges ? (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
+              <span style={{ fontSize: "13px", color: "var(--text3)", fontWeight: "600" }}>
+                Unsaved: {changedFields.join(", ")}
+              </span>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button className="button" disabled={isSaving} onClick={discardChanges} type="button">
+                  Discard
+                </button>
+                <button className="button button--primary" disabled={isSaving} onClick={saveChanges} type="button">
+                  {isSaving ? "Saving..." : "Save changes"}
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <div className="expanded-panel__right">
@@ -2342,7 +2559,12 @@ function ExpandedActionPlan({
             <p style={{ margin: 0 }}>{audit?.name ?? "No audit linked"}</p>
             <AuditTypeBadge auditType={audit?.audit_type} />
             {audit ? (
-              <a href={`/audits/${audit.id}`} style={{ color: "#dc2626", fontSize: 12 }}>
+              <a
+                href={`/audits/${audit.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: "#dc2626", fontSize: 12 }}
+              >
                 View Audit →
               </a>
             ) : null}
@@ -2356,34 +2578,277 @@ function ExpandedActionPlan({
         </section>
 
         <section className="expanded-section">
-          <h3>Owners</h3>
-          <CompactAssignmentSection
-            assignedUsers={actionPlan.action_plan_owners}
-            buttonLabel="+ Assign Owner"
-            canManage={canManageAssignments}
-            emptyText="No owner assigned"
-            userOptions={userOptions}
-            onAssign={assignOwner}
-            onRemove={removeOwner}
-          />
-        </section>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
+            <h3 style={{ margin: 0 }}>People</h3>
+          </div>
 
-        <section className="expanded-section">
-          <h3>Follow-up Auditors</h3>
-          <CompactAssignmentSection
-            assignedUsers={actionPlan.action_plan_follow_up_auditors}
-            buttonLabel="+ Assign Follow-up Auditor"
-            canManage={canManageAssignments}
-            emptyText="No follow-up auditor assigned"
-            userOptions={userOptions.filter((option) => option.is_internal_auditor)}
-            onAssign={assignFollowUpAuditor}
-            onRemove={removeFollowUpAuditor}
-          />
+          {actionPlan.action_plan_owners.map((owner) => (
+            <PersonCard
+              key={owner.id}
+              user={owner.user}
+              role="Owner"
+              canManage={canManageAssignments}
+              onRemove={() => removeOwner(owner.user.id)}
+            />
+          ))}
+
+          {actionPlan.action_plan_follow_up_auditors.map((auditor) => (
+            <PersonCard
+              key={auditor.id}
+              user={auditor.user}
+              role="Follow-up Auditor"
+              canManage={canManageAssignments}
+              onRemove={() => removeFollowUpAuditor(auditor.user.id)}
+            />
+          ))}
+
+          {canManageAssignments ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "10px" }}>
+              {assigningType === "owner" ? (
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <select
+                    defaultValue=""
+                    onChange={(event) => {
+                      if (event.target.value) {
+                        assignOwner(event.target.value);
+                        setAssigningType(null);
+                      }
+                    }}
+                    style={{ flex: 1, fontSize: 12, padding: "6px 10px", borderRadius: "8px" }}
+                  >
+                    <option disabled value="">
+                      Select owner...
+                    </option>
+                    {userOptions
+                      .filter((u) => !actionPlan.action_plan_owners.some((o) => o.user.id === u.id))
+                      .map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.name}
+                          {option.department ? ` - ${option.department}` : ""}
+                        </option>
+                      ))}
+                  </select>
+                  <button
+                    onClick={() => setAssigningType(null)}
+                    style={{
+                      border: 0,
+                      background: "transparent",
+                      color: "var(--text3)",
+                      cursor: "pointer",
+                      fontSize: "12px",
+                      padding: "4px",
+                    }}
+                    type="button"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setAssigningType("owner")}
+                  style={{
+                    border: 0,
+                    background: "transparent",
+                    color: "#dc2626",
+                    cursor: "pointer",
+                    fontSize: "12px",
+                    padding: 0,
+                    textAlign: "left",
+                    fontWeight: "600",
+                  }}
+                  type="button"
+                >
+                  + Assign Owner
+                </button>
+              )}
+
+              {assigningType === "auditor" ? (
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <select
+                    defaultValue=""
+                    onChange={(event) => {
+                      if (event.target.value) {
+                        assignFollowUpAuditor(event.target.value);
+                        setAssigningType(null);
+                      }
+                    }}
+                    style={{ flex: 1, fontSize: 12, padding: "6px 10px", borderRadius: "8px" }}
+                  >
+                    <option disabled value="">
+                      Select auditor...
+                    </option>
+                    {userOptions
+                      .filter((u) => u.is_internal_auditor && !actionPlan.action_plan_follow_up_auditors.some((a) => a.user.id === u.id))
+                      .map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.name}
+                          {option.department ? ` - ${option.department}` : ""}
+                        </option>
+                      ))}
+                  </select>
+                  <button
+                    onClick={() => setAssigningType(null)}
+                    style={{
+                      border: 0,
+                      background: "transparent",
+                      color: "var(--text3)",
+                      cursor: "pointer",
+                      fontSize: "12px",
+                      padding: "4px",
+                    }}
+                    type="button"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setAssigningType("auditor")}
+                  style={{
+                    border: 0,
+                    background: "transparent",
+                    color: "#dc2626",
+                    cursor: "pointer",
+                    fontSize: "12px",
+                    padding: 0,
+                    textAlign: "left",
+                    fontWeight: "600",
+                  }}
+                  type="button"
+                >
+                  + Assign Follow-up Auditor
+                </button>
+              )}
+            </div>
+          ) : null}
         </section>
 
       </div>
     </div>
     </>
+  );
+}
+
+function PersonCard({
+  user,
+  role,
+  canManage,
+  onRemove,
+}: {
+  user: RelatedUser;
+  role: string;
+  canManage: boolean;
+  onRemove: () => void;
+}) {
+  const [showTooltip, setShowTooltip] = useState(false);
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+
+  return (
+    <div
+      className="expanded-panel__people-card"
+      onMouseEnter={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const tooltipWidth = 250; // estimated tooltip width
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        
+        let x = rect.right + 10;
+        let y = rect.top;
+        
+        // Flip left if would overflow right
+        if (x + tooltipWidth > viewportWidth) {
+          x = rect.left - tooltipWidth - 10;
+        }
+        
+        // Flip up if would overflow bottom
+        if (y + 100 > viewportHeight) {
+          y = rect.bottom - 100;
+        }
+        
+        setTooltipPos({ x, y });
+        setShowTooltip(true);
+      }}
+      onMouseLeave={() => setShowTooltip(false)}
+      style={{ position: "relative", marginBottom: "8px" }}
+    >
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: "28px",
+          height: "28px",
+          borderRadius: "50%",
+          background: "var(--surface2)",
+          color: "var(--text)",
+          fontSize: "11px",
+          fontWeight: "700",
+          flexShrink: 0,
+        }}
+      >
+        {getInitials(user.name)}
+      </span>
+      <span style={{ flex: 1, fontSize: "13px", fontWeight: "600", color: "var(--text)" }}>
+        {user.name}
+      </span>
+      <span
+        style={{
+          fontSize: "10px",
+          fontWeight: "700",
+          padding: "2px 7px",
+          borderRadius: "999px",
+          background: role === "Owner" ? "#fef2f2" : "#eff6ff",
+          color: role === "Owner" ? "#991b1b" : "#1e40af",
+        }}
+      >
+        {role}
+      </span>
+      {canManage ? (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          style={{
+            border: 0,
+            background: "transparent",
+            color: "var(--text3)",
+            cursor: "pointer",
+            fontSize: "14px",
+            padding: "4px",
+          }}
+          type="button"
+        >
+          ✎
+        </button>
+      ) : null}
+
+      {showTooltip ? (
+        <div
+          className="expanded-panel__people-tooltip"
+          style={{
+            position: "fixed",
+            left: `${tooltipPos.x}px`,
+            top: `${tooltipPos.y}px`,
+          }}
+        >
+          {user.department ? <div>Department: {user.department}</div> : null}
+          {user.job_title ? <div>Title: {user.job_title}</div> : null}
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span
+              style={{
+                display: "inline-block",
+                width: "6px",
+                height: "6px",
+                borderRadius: "50%",
+                background: "#16a34a",
+              }}
+            />
+            <span>Active</span>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

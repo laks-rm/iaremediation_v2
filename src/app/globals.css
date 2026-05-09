@@ -127,6 +127,26 @@ html[data-sidebar="collapsed"] {
   transition: margin-left 180ms ease;
 }
 
+/* Optimize content width for MacBook 14" and larger screens */
+.dashboard-page,
+.audits-page,
+.action-plans-page,
+.kpi-page,
+.records-page,
+.ai-page {
+  max-width: 1800px;
+  margin: 0 auto;
+  padding: 20px 32px;
+}
+
+@media (min-width: 1400px) and (max-width: 1600px) {
+  .dashboard-page,
+  .audits-page,
+  .action-plans-page {
+    padding: 20px 40px;
+  }
+}
+
 .sidebar {
   position: fixed;
   inset: 0 auto 0 0;
@@ -612,6 +632,14 @@ html[data-sidebar="collapsed"] {
   padding: 36px 36px 112px;
   background: #ffffff;
   color: #0f172a;
+}
+
+/* Better padding and max-width for MacBook 14" */
+@media (min-width: 1400px) {
+  .records-wizard__right {
+    padding: 40px 48px 112px;
+    max-width: 1200px;
+  }
 }
 
 .records-mode {
@@ -1462,6 +1490,14 @@ html[data-sidebar="collapsed"] {
   margin-bottom: 18px;
 }
 
+/* Better filter spacing for MacBook 14" */
+@media (min-width: 1400px) {
+  .audits-filterbar {
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+}
+
 .audits-filterbar label {
   display: inline-flex;
   align-items: center;
@@ -1516,6 +1552,14 @@ html[data-sidebar="collapsed"] {
 
 .audits-table {
   min-width: 1080px;
+}
+
+/* Better column proportions for MacBook 14" */
+@media (min-width: 1400px) and (max-width: 1700px) {
+  .audits-table__head,
+  .audits-row {
+    grid-template-columns: minmax(100px, 1fr) minmax(200px, 2.5fr) minmax(110px, 1fr) minmax(120px, 1.2fr) minmax(95px, 0.9fr) minmax(75px, 0.7fr) minmax(75px, 0.7fr) minmax(95px, 0.95fr) minmax(80px, 0.75fr);
+  }
 }
 
 .audits-table__head,
@@ -4108,6 +4152,14 @@ html.dark .activity-action-chip--purple { background: #581c87; color: #e9d5ff; }
   gap: 14px;
 }
 
+/* Better KPI card spacing for MacBook 14" */
+@media (min-width: 1400px) {
+  .dashboard-kpis {
+    gap: 18px;
+    margin-bottom: 24px;
+  }
+}
+
 .dashboard-kpis--three {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -4124,6 +4176,14 @@ html.dark .activity-action-chip--purple { background: #581c87; color: #e9d5ff; }
   border-radius: 16px;
   padding: 18px;
   background: var(--surface);
+}
+
+/* Better KPI card padding for MacBook 14" */
+@media (min-width: 1400px) {
+  .dashboard-kpi {
+    padding: 20px 22px;
+    gap: 6px;
+  }
 }
 
 .dashboard-kpi strong {
@@ -4235,10 +4295,28 @@ html.dark .activity-action-chip--purple { background: #581c87; color: #e9d5ff; }
   min-width: 1100px;
 }
 
+/* Optimized column widths for MacBook 14" */
+@media (min-width: 1400px) and (max-width: 1700px) {
+  .closure-table__head,
+  .closure-table__row {
+    grid-template-columns: minmax(200px, 1.6fr) 85px 83px 83px 83px 68px 83px 83px minmax(130px, 1fr) 50px;
+    gap: 10px;
+  }
+}
+
 .closure-table.closure-table--kpi .closure-table__head,
 .closure-table.closure-table--kpi .closure-table__row {
   grid-template-columns: minmax(160px, 1.3fr) 88px 88px 88px 72px minmax(100px, 1fr) 52px;
   min-width: 900px;
+}
+
+/* Optimized KPI variant for MacBook 14" */
+@media (min-width: 1400px) and (max-width: 1700px) {
+  .closure-table.closure-table--kpi .closure-table__head,
+  .closure-table.closure-table--kpi .closure-table__row {
+    grid-template-columns: minmax(150px, 1.25fr) 83px 83px 83px 68px minmax(95px, 1fr) 50px;
+    min-width: 850px;
+  }
 }
 
 .closure-table__head {
@@ -4334,6 +4412,22 @@ html.dark .activity-action-chip--purple { background: #581c87; color: #e9d5ff; }
 
 .dashboard-table-card {
   overflow-x: auto;
+}
+
+/* Improved spacing and visual comfort for MacBook 14" */
+@media (min-width: 1400px) {
+  .dashboard-table-card {
+    padding: 20px 24px;
+  }
+  
+  .dashboard-filterbar {
+    gap: 14px;
+    padding: 0 4px;
+  }
+  
+  .dashboard-header {
+    margin-bottom: 24px;
+  }
 }
 
 .dashboard-panel h2,
@@ -4965,6 +5059,17 @@ html.dark .activity-action-chip--purple { background: #581c87; color: #e9d5ff; }
   text-align: left;
 }
 
+/* Better row spacing and readability at MacBook 14" */
+@media (min-width: 1400px) {
+  .dashboard-row {
+    padding: 16px 18px;
+  }
+  
+  .dashboard-row-wrap {
+    margin-bottom: 6px;
+  }
+}
+
 .dashboard-row:hover {
   background: var(--surface2);
 }
@@ -5419,7 +5524,7 @@ html.dark .summary-evidence-pill--complete {
 
 .expanded-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.7fr);
   gap: 18px;
   border-top: 1px solid var(--border);
   padding: 18px;
@@ -5427,12 +5532,23 @@ html.dark .summary-evidence-pill--complete {
   font-size: 14px;
 }
 
+/* Better spacing and proportions for MacBook 14" */
+@media (min-width: 1400px) {
+  .expanded-panel {
+    padding: 22px;
+    gap: 22px;
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.7fr);
+  }
+}
+
 .expanded-panel__header {
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 1rem;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 0.5px solid var(--border);
+  background: var(--surface2);
 }
 
 .expanded-panel__header .button {
@@ -5465,6 +5581,54 @@ html.dark .summary-evidence-pill--complete {
   display: grid;
   align-content: start;
   gap: 14px;
+}
+
+.expanded-panel__left textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.expanded-panel__people-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.expanded-panel__people-card:hover {
+  background: var(--surface2);
+}
+
+.expanded-panel__people-tooltip {
+  position: absolute;
+  white-space: nowrap;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  z-index: 100;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 10%);
+}
+
+.expanded-panel__save-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+
+.expanded-panel__save-bar > div {
+  display: flex;
+  gap: 8px;
 }
 
 .detail-field,

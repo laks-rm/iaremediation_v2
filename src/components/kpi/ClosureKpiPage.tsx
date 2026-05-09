@@ -584,7 +584,7 @@ function DrillDownActionPlanCard({ ap }: { ap: ActionPlanSummary }) {
       }}
     >
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-        <Link className="audits-mono" href={`/action-plans/${ap.id}`}>
+        <Link className="audits-mono" href={`/action-plans?expand=${ap.id}`}>
           {ap.display_id}
         </Link>
         <span className={priorityChipClass(ap.priority)} style={{ fontSize: 11, fontWeight: 800 }}>

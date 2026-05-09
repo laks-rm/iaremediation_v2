@@ -591,7 +591,7 @@ export default function AuditDetailPage() {
 
                       <div className="audit-action-plan-list">
                         {finding.action_plans.map((plan) => (
-                          <Link href={`/action-plans/${plan.id}`} key={plan.id}>
+                          <Link href={`/action-plans?expand=${plan.id}`} key={plan.id}>
                             <strong>{plan.display_id}</strong>
                             <span>{plan.description}</span>
                             <em className={badgeClass("status", plan.status)}>{STATUS_LABELS[plan.status]}</em>

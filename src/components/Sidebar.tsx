@@ -93,6 +93,9 @@ function isActivePath(pathname: string, href: string) {
   return pathname === pathOnly || pathname.startsWith(`${pathOnly}/`);
 }
 
+let _badgeCache: { count: number; fetchedAt: number } | null = null;
+const BADGE_TTL_MS = 60_000;
+
 export default function Sidebar() {
   const pathname = usePathname();
   const { theme, toggleTheme } = useTheme();
@@ -163,25 +166,37 @@ export default function Sidebar() {
 
     let isMounted = true;
 
-    fetch("/api/v1/dashboard/summary?my_items_only=true")
-      .then(async (response) => {
+    (async () => {
+      const now = Date.now();
+      if (_badgeCache && now - _badgeCache.fetchedAt < BADGE_TTL_MS) {
+        setOpenActionPlanCount(_badgeCache.count);
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/v1/dashboard/summary?my_items_only=true");
         if (!response.ok) {
-          return null;
+          if (isMounted) {
+            setOpenActionPlanCount(null);
+          }
+          return;
         }
 
         const body = (await response.json()) as { kpis?: { total_open?: number } };
-        return typeof body.kpis?.total_open === "number" ? body.kpis.total_open : null;
-      })
-      .then((count) => {
+        const count = typeof body.kpis?.total_open === "number" ? body.kpis.total_open : null;
+        
         if (isMounted) {
           setOpenActionPlanCount(count);
+          if (count !== null) {
+            _badgeCache = { count, fetchedAt: Date.now() };
+          }
         }
-      })
-      .catch(() => {
+      } catch {
         if (isMounted) {
           setOpenActionPlanCount(null);
         }
-      });
+      }
+    })();
 
     return () => {
       isMounted = false;
@@ -191,12 +206,41 @@ export default function Sidebar() {
   useEffect(() => {
     if (!user?.is_admin) return;
 
-    loadNotifications();
-    const interval = window.setInterval(loadNotifications, 60_000);
+    let intervalId: number | null = null;
+
+    function startPolling() {
+      if (intervalId) return;
+      intervalId = window.setInterval(loadNotifications, 60_000);
+    }
+
+    function stopPolling() {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    }
+
+    function handleVisibilityChange() {
+      if (document.hidden) {
+        stopPolling();
+      } else {
+        loadNotifications();
+        startPolling();
+      }
+    }
+
+    if (!document.hidden) {
+      loadNotifications();
+      startPolling();
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
     return () => {
-      window.clearInterval(interval);
+      stopPolling();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [loadNotifications, user?.is_admin]);
+  }, [user?.is_admin, loadNotifications]);
 
   useEffect(() => {
     window.addEventListener("ia:notifications-refresh", loadNotifications);
