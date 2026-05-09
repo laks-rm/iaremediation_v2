@@ -217,9 +217,9 @@ export function getAuditLogChangeSummary(entry: AuditLogLike) {
 
   if (entry.action === "EvidenceUpload" || entry.action === "EvidenceReplace") {
     const filename =
-      getJsonString(entry.after_json, "filename") ??
       getJsonString(entry.after_json, "original_name") ??
       getJsonString(entry.before_json, "original_name") ??
+      getJsonString(entry.after_json, "filename") ??
       "file";
     const size = formatFileSize(getJsonNumber(entry.after_json, "file_size"));
 
@@ -231,10 +231,10 @@ export function getAuditLogChangeSummary(entry: AuditLogLike) {
 
   if (entry.action === "Delete") {
     const snippet =
+      getJsonString(entry.before_json, "original_name") ??
       getJsonString(entry.before_json, "description") ??
       getJsonString(entry.before_json, "title") ??
-      getJsonString(entry.before_json, "comment") ??
-      getJsonString(entry.before_json, "original_name");
+      getJsonString(entry.before_json, "comment");
 
     return {
       title: "Record deleted",
@@ -262,9 +262,10 @@ export function getAuditLogChangeSummary(entry: AuditLogLike) {
     const actionPlansCount =
       getJsonNumber(entry.after_json, "action_plans_created") ?? getJsonNumber(entry.after_json, "action_plans");
     const filename =
+      getJsonString(entry.after_json, "original_name") ??
+      getJsonString(entry.before_json, "original_name") ??
       getJsonString(entry.after_json, "filename") ??
-      getJsonString(entry.before_json, "filename") ??
-      getJsonString(entry.before_json, "original_name");
+      getJsonString(entry.before_json, "filename");
 
     return {
       title:

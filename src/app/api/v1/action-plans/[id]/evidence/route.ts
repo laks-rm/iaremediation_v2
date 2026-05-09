@@ -115,6 +115,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
         description: typeof description === "string" ? nullableString(description) : null,
         uploaded_by_id: currentUser.id,
       },
+      include: {
+        uploaded_by: {
+          select: safeUserSelect,
+        },
+      },
     });
 
     await writeAuditLog({
