@@ -96,3 +96,21 @@ export async function deleteFile(filePath: string): Promise<void> {
   const { absolutePath } = getLocalPath(normalizedPath);
   await fs.rm(absolutePath, { force: true });
 }
+
+export async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    const normalizedPath = normalizeStoragePath(filePath);
+
+    if (process.env.STORAGE_PROVIDER === "gcs") {
+      const bucket = await getGcsBucket();
+      const [exists] = await bucket.file(normalizedPath).exists();
+      return exists;
+    }
+
+    const { absolutePath } = getLocalPath(normalizedPath);
+    await fs.access(absolutePath);
+    return true;
+  } catch {
+    return false;
+  }
+}

@@ -56,6 +56,7 @@ type RelatedUser = {
   team_l1?: string | null;
   manager_name?: string | null;
   is_internal_auditor?: boolean;
+  is_active?: boolean;
 };
 
 export type DashboardComment = {
@@ -221,6 +222,7 @@ export type UserOption = {
   department: string | null;
   job_title?: string | null;
   is_internal_auditor: boolean;
+  is_active: boolean;
 };
 
 export type ActionPlanTableProps = {

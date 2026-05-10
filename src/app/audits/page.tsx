@@ -338,22 +338,24 @@ export default function AuditsPage() {
                     <span>
                       {audit.open_action_plan_count}/{audit.action_plan_count} open
                     </span>
-                    <span className="audits-action">View →</span>
+                    <span className="audits-actions-cell">
+                      <span className="audits-action">View →</span>
+                      {isAdmin ? (
+                        <button
+                          className="audits-delete-icon"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setDeleteAuditId(audit.id);
+                          }}
+                          title="Delete this audit (admin only)"
+                          type="button"
+                        >
+                          🗑️
+                        </button>
+                      ) : null}
+                    </span>
                   </Link>
-                  {isAdmin ? (
-                    <button
-                      className="audits-row-delete"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        setDeleteAuditId(audit.id);
-                      }}
-                      title="Delete this audit"
-                      type="button"
-                    >
-                      Delete
-                    </button>
-                  ) : null}
                   <button
                     className="audits-row-copy-link"
                     onClick={async (event) => {

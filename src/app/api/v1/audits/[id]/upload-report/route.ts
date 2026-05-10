@@ -81,13 +81,73 @@ export async function POST(request: NextRequest, context: RouteContext) {
       },
     });
 
+    const isReplace = Boolean(audit.report_pdf_filename);
     await writeAuditLog({
       userId: currentUser.id,
       action: "Update",
       entityType: "audits",
       entityId: id,
-      beforeJson: audit,
-      afterJson: updatedAudit,
+      beforeJson: isReplace ? { report_pdf_filename: audit.report_pdf_filename } : null,
+      afterJson: { report_pdf_filename: updatedAudit.report_pdf_filename },
+      ipAddress: getClientIp(request),
+    });
+
+    return NextResponse.json({ audit: updatedAudit });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: NextRequest, context: RouteContext) {
+  try {
+    const currentUser = await requireRole(["AuditTeam"]);
+    const { id } = await context.params;
+    const audit = await prisma.audits.findFirst({
+      where: {
+        id,
+        is_deleted: false,
+      },
+      select: {
+        id: true,
+        report_pdf_path: true,
+        report_pdf_filename: true,
+      },
+    });
+
+    if (!audit) {
+      return NextResponse.json({ error: "Audit not found" }, { status: 404 });
+    }
+
+    if (!audit.report_pdf_filename) {
+      return NextResponse.json({ error: "No report file to remove" }, { status: 400 });
+    }
+
+    const updatedAudit = await prisma.audits.update({
+      where: {
+        id,
+      },
+      data: {
+        report_pdf_path: null,
+        report_pdf_filename: null,
+      },
+      select: {
+        id: true,
+        report_pdf_path: true,
+        report_pdf_filename: true,
+      },
+    });
+
+    await writeAuditLog({
+      userId: currentUser.id,
+      action: "Update",
+      entityType: "audits",
+      entityId: id,
+      beforeJson: { report_pdf_filename: audit.report_pdf_filename },
+      afterJson: null,
       ipAddress: getClientIp(request),
     });
 

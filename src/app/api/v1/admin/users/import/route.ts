@@ -13,7 +13,6 @@ import { prisma } from "../../../../../../lib/db/prisma";
 
 const importSchema = z.object({
   file_type: z.enum(["active", "leavers"]),
-  first_time_import: z.boolean().optional().default(false),
   users: z.array(z.record(z.string(), z.unknown())),
 });
 
@@ -116,11 +115,6 @@ export async function POST(request: NextRequest) {
       }
 
       if (!existing) {
-        if (!parsed.data.first_time_import) {
-          summary.skipped += 1;
-          continue;
-        }
-
         if (!orgData.email) {
           summary.skipped += 1;
           continue;

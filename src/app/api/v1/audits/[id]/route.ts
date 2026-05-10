@@ -5,6 +5,7 @@ import { z } from "zod";
 import { writeAuditLog } from "../../../../../lib/audit-log/writeAuditLog";
 import { AuthError, requireRole } from "../../../../../lib/auth/requireRole";
 import { prisma } from "../../../../../lib/db/prisma";
+import { fileExists } from "../../../../../lib/storage";
 
 const updateAuditSchema = z.object({
   name: z.string().trim().min(1).max(255).optional(),
@@ -131,7 +132,12 @@ export async function GET(_request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ audit });
+    let report_file_missing = false;
+    if (audit.report_pdf_path) {
+      report_file_missing = !(await fileExists(audit.report_pdf_path));
+    }
+
+    return NextResponse.json({ audit: { ...audit, report_file_missing } });
   } catch (error) {
     if (error instanceof AuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });

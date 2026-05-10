@@ -42,7 +42,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
       prisma.users.findFirst({
         where: {
           id: parsed.data.user_id,
-          is_active: true,
           is_internal_auditor: true,
         },
         select: {

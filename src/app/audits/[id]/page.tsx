@@ -3,7 +3,7 @@
 import { getSession } from "next-auth/react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import AppLayout from "../../../components/AppLayout";
 import ConfirmDialog from "../../../components/ConfirmDialog";
@@ -33,6 +33,7 @@ type AuditDetail = {
   report_issue_date: string | null;
   executive_summary: string | null;
   report_pdf_filename: string | null;
+  report_file_missing?: boolean;
   created_at: string;
   created_by: {
     id: string;
@@ -144,6 +145,11 @@ export default function AuditDetailPage() {
   const [deleteAuditOpen, setDeleteAuditOpen] = useState(false);
   const [deleteFindingId, setDeleteFindingId] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isReplacingReport, setIsReplacingReport] = useState(false);
+  const [removeReportOpen, setRemoveReportOpen] = useState(false);
+  const [isUploadingReport, setIsUploadingReport] = useState(false);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadAudit = useCallback(async () => {
     setIsLoading(true);
@@ -286,6 +292,109 @@ export default function AuditDetailPage() {
     await loadAudit();
   }
 
+  async function handleReplaceReport(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsReplacingReport(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch(`/api/v1/audits/${auditId}/upload-report`, {
+        method: "POST",
+        body: formData,
+      });
+      const body = await readResponseBody(response);
+      if (!response.ok) {
+        toast.error(responseError(body, "Unable to replace report."));
+        return;
+      }
+      toast.success("Report replaced successfully!");
+      await loadAudit();
+    } catch (caughtError) {
+      toast.error(caughtError instanceof Error ? caughtError.message : "Unable to replace report.");
+    } finally {
+      setIsReplacingReport(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  }
+
+  async function handleUploadReport(file: File) {
+    setIsUploadingReport(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch(`/api/v1/audits/${auditId}/upload-report`, {
+        method: "POST",
+        body: formData,
+      });
+      const body = await readResponseBody(response);
+      if (!response.ok) {
+        toast.error(responseError(body, "Unable to upload report."));
+        return;
+      }
+      toast.success("Report uploaded successfully!");
+      await loadAudit();
+    } catch (caughtError) {
+      toast.error(caughtError instanceof Error ? caughtError.message : "Unable to upload report.");
+    } finally {
+      setIsUploadingReport(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  }
+
+  function handleFileInputChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    
+    if (audit?.report_pdf_filename) {
+      handleReplaceReport(event);
+    } else {
+      handleUploadReport(file);
+    }
+  }
+
+  function handleDragOver(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setIsDraggingOver(true);
+  }
+
+  function handleDragLeave(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setIsDraggingOver(false);
+  }
+
+  function handleDrop(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setIsDraggingOver(false);
+    
+    const file = event.dataTransfer.files?.[0];
+    if (file && file.type === "application/pdf") {
+      handleUploadReport(file);
+    } else {
+      toast.error("Please upload a PDF file.");
+    }
+  }
+
+  async function removeReport() {
+    const response = await fetch(`/api/v1/audits/${auditId}/upload-report`, { method: "DELETE" });
+    const body = await readResponseBody(response);
+    if (!response.ok) {
+      toast.error(responseError(body, "Unable to remove report."));
+      setRemoveReportOpen(false);
+      return;
+    }
+    toast.success("Report removed successfully!");
+    setRemoveReportOpen(false);
+    await loadAudit();
+  }
+
   if (isLoading) {
     return (
       <AppLayout>
@@ -378,13 +487,111 @@ export default function AuditDetailPage() {
             </div>
           </div>
           <div className="audit-hero__actions">
+            {audit.report_file_missing ? (
+              <div style={{ padding: "12px", background: "#fef3c7", border: "1px solid #f59e0b", borderRadius: "8px", marginBottom: "12px" }}>
+                <strong style={{ color: "#92400e" }}>⚠ Report file is missing or unreachable.</strong>
+                <p style={{ margin: "4px 0 0", fontSize: "14px", color: "#78350f" }}>
+                  The file may have been moved or deleted from storage. You can replace it with a new upload{canEdit ? ", or remove the broken reference" : ""}.
+                </p>
+              </div>
+            ) : null}
             {audit.report_pdf_filename ? (
-              <a
-                className="audit-download"
-                href={`/api/v1/audits/${audit.id}/report-download`}
-              >
-                📎 {audit.report_pdf_filename} Download →
-              </a>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                {audit.report_file_missing ? (
+                  <span style={{ color: "#9ca3af", fontFamily: "monospace" }}>
+                    📎 {audit.report_pdf_filename} (file missing)
+                  </span>
+                ) : (
+                  <a
+                    className="audit-download"
+                    href={`/api/v1/audits/${audit.id}/report-download`}
+                  >
+                    📎 {audit.report_pdf_filename} Download →
+                  </a>
+                )}
+                {canEdit ? (
+                  <>
+                    <input
+                      accept="application/pdf"
+                      ref={fileInputRef}
+                      style={{ display: "none" }}
+                      type="file"
+                      onChange={handleFileInputChange}
+                    />
+                    <button
+                      className="audit-icon-button"
+                      disabled={isReplacingReport}
+                      title="Replace this report"
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      {isReplacingReport ? "⏳" : "🔄"}
+                    </button>
+                    <button
+                      className="audit-icon-button"
+                      style={{ color: "#dc2626" }}
+                      title="Remove this report"
+                      type="button"
+                      onClick={() => setRemoveReportOpen(true)}
+                    >
+                      🗑
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            ) : !audit.report_file_missing ? (
+              canEdit ? (
+                <div
+                  className="audit-upload-zone"
+                  style={{
+                    border: isDraggingOver ? "2px dashed #2563eb" : "2px dashed var(--border2)",
+                    borderRadius: "12px",
+                    padding: "24px",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: "8px",
+                    cursor: "pointer",
+                    transition: "all 120ms",
+                    background: isDraggingOver ? "var(--surface2)" : "var(--surface)",
+                    marginBottom: "12px",
+                  }}
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragLeave={handleDragLeave}
+                  onDragOver={handleDragOver}
+                  onDrop={handleDrop}
+                >
+                  <input
+                    accept="application/pdf"
+                    ref={fileInputRef}
+                    style={{ display: "none" }}
+                    type="file"
+                    onChange={handleFileInputChange}
+                  />
+                  {isUploadingReport ? (
+                    <>
+                      <span style={{ fontSize: "32px" }}>⏳</span>
+                      <strong style={{ fontSize: "14px", color: "var(--text2)", fontWeight: 600 }}>
+                        Uploading...
+                      </strong>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ fontSize: "32px" }}>📤</span>
+                      <strong style={{ fontSize: "14px", color: "var(--text2)", fontWeight: 600 }}>
+                        No report uploaded yet
+                      </strong>
+                      <span style={{ fontSize: "13px", color: "var(--text3)" }}>
+                        Click or drag a PDF to upload
+                      </span>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <p style={{ color: "var(--text3)", fontSize: "14px", marginBottom: "12px" }}>
+                  No report uploaded for this audit.
+                </p>
+              )
             ) : null}
             <button
               className="button"
@@ -685,6 +892,16 @@ export default function AuditDetailPage() {
           title="Delete finding?"
           onCancel={() => setDeleteFindingId("")}
           onConfirm={deleteFinding}
+        />
+        <ConfirmDialog
+          cancelLabel="Cancel"
+          confirmLabel="Remove report"
+          isDangerous
+          isOpen={removeReportOpen}
+          message="The audit metadata, findings, and action plans will remain. You can upload a new report later. The previous file will be kept in storage but unreferenced."
+          title="Remove this audit report?"
+          onCancel={() => setRemoveReportOpen(false)}
+          onConfirm={removeReport}
         />
       </div>
     </AppLayout>

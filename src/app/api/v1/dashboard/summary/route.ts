@@ -68,6 +68,7 @@ const actionPlanInclude = {
           email: true,
           job_title: true,
           department: true,
+          is_active: true,
         },
       },
     },
@@ -78,6 +79,7 @@ const actionPlanInclude = {
         select: {
           id: true,
           name: true,
+          is_active: true,
         },
       },
     },
@@ -93,6 +95,7 @@ const actionPlanInclude = {
           department: true,
           team_l1: true,
           manager_name: true,
+          is_active: true,
         },
       },
     },

@@ -49,8 +49,9 @@ export default function UsersTab() {
   const [editingUser, setEditingUser] = useState<Partial<AdminUser> | null>(null);
   const [hoverUser, setHoverUser] = useState<{ user: AdminUser; x: number; y: number } | null>(null);
   const [importPreview, setImportPreview] = useState<{ rows: Record<string, string>[]; fileName: string; fileType: "active" | "leavers" } | null>(null);
-  const [firstTimeImport, setFirstTimeImport] = useState(false);
+  const [csvMismatch, setCsvMismatch] = useState<"looks-like-leavers" | "looks-like-active" | null>(null);
   const [banner, setBanner] = useState("");
+  const [bannerType, setBannerType] = useState<"success" | "warning">("success");
   const [isImporting, setIsImporting] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [resetUser, setResetUser] = useState<AdminUser | null>(null);
@@ -85,8 +86,31 @@ export default function UsersTab() {
   async function onCsvSelected(event: ChangeEvent<HTMLInputElement>, fileType: "active" | "leavers") {
     const file = event.target.files?.[0];
     if (!file) return;
-    setFirstTimeImport(false);
-    setImportPreview({ rows: parseCsv(await file.text()), fileName: file.name, fileType });
+    const rows = parseCsv(await file.text());
+    
+    let mismatch: "looks-like-leavers" | "looks-like-active" | null = null;
+    
+    if (fileType === "active") {
+      const leaverRowCount = rows.filter(row => {
+        const lastWorking = String(row.last_working_date ?? row.end_date ?? "").trim();
+        return lastWorking.length > 0;
+      }).length;
+      if (leaverRowCount > rows.length / 2) {
+        mismatch = "looks-like-leavers";
+      }
+    } else {
+      const activeRowCount = rows.filter(row => {
+        const lastWorking = String(row.last_working_date ?? "").trim();
+        const endDate = String(row.end_date ?? "").trim();
+        return lastWorking.length === 0 && endDate.length === 0;
+      }).length;
+      if (activeRowCount > rows.length / 2) {
+        mismatch = "looks-like-active";
+      }
+    }
+    
+    setCsvMismatch(mismatch);
+    setImportPreview({ rows, fileName: file.name, fileType });
     event.target.value = "";
   }
 
@@ -99,7 +123,6 @@ export default function UsersTab() {
       body: JSON.stringify({
         users: importPreview.rows,
         file_type: importPreview.fileType,
-        first_time_import: importPreview.fileType === "leavers" ? firstTimeImport : false,
       }),
     });
     const body = await readResponseBody(response);
@@ -109,14 +132,26 @@ export default function UsersTab() {
       return;
     }
     const summary = (body as { summary: Record<string, number> }).summary;
-    setBanner(
-      `Import complete: ${summary.created ?? 0} created, ${summary.updated ?? 0} updated, ${summary.deactivated ?? 0} deactivated.${
-        firstTimeImport && importPreview.fileType === "leavers"
-          ? "\nFirst-time import complete. Remember to uncheck 'First-time import' for all future weekly updates."
-          : ""
-      }`,
-    );
-    setFirstTimeImport(false);
+    
+    const counts = [];
+    if (summary.created > 0) counts.push(`${summary.created} created`);
+    if (summary.updated > 0) counts.push(`${summary.updated} updated`);
+    if (summary.deactivated > 0 && importPreview.fileType === "leavers") {
+      counts.push(`${summary.deactivated} deactivated`);
+    }
+    if (summary.unchanged > 0) counts.push(`${summary.unchanged} unchanged`);
+    if (summary.skipped > 0) counts.push(`${summary.skipped} skipped`);
+    
+    let bannerText = `Import complete:\n• ${counts.join("\n• ")}`;
+    if (summary.skipped > 0) {
+      bannerText += `\n\n${summary.skipped} rows were skipped because they had neither email nor employee_id. Check your CSV for malformed rows.`;
+    }
+    
+    const hasChanges = (summary.created ?? 0) > 0 || (summary.updated ?? 0) > 0 || (summary.deactivated ?? 0) > 0;
+    setBannerType(hasChanges ? "success" : "warning");
+    setBanner(bannerText);
+    
+    setCsvMismatch(null);
     setImportPreview(null);
     window.dispatchEvent(new Event("ia:notifications-refresh"));
     await loadUsers();
@@ -177,7 +212,7 @@ export default function UsersTab() {
   return (
     <section className="admin-tab">
       <ErrorBanner message={error} onRetry={loadUsers} />
-      {banner ? <div className="admin-success-banner" style={{ whiteSpace: "pre-line" }}>{banner}</div> : null}
+      {banner ? <div className={bannerType === "success" ? "admin-success-banner" : "admin-warning-banner"} style={{ whiteSpace: "pre-line" }}>{banner}</div> : null}
       <div className="admin-tab-toolbar">
         <strong>{users.length} users · {active} active · {pending} pending access</strong>
       <button className="button button--primary" onClick={() => { setFieldErrors({}); setEditingUser(emptyUser); }} type="button">Add User</button>
@@ -190,37 +225,43 @@ export default function UsersTab() {
         {importPreview ? (
           <div className="admin-import-preview">
             <span>Ready to import {importPreview.rows.length} users from {importPreview.fileName}</span>
-            {importPreview.fileType === "leavers" ? (
-              <>
-                <label style={{ display: "grid", gap: 2 }}>
-                  <span>
-                    <input checked={firstTimeImport} type="checkbox" onChange={(event) => setFirstTimeImport(event.target.checked)} /> First-time import — create new user records for leavers not already in the system
-                  </span>
-                  <em style={{ color: "#8a867c", fontSize: 11 }}>
-                    Only enable this for your initial data load. During weekly updates, leavers not found in the system are skipped automatically.
-                  </em>
-                </label>
-                {firstTimeImport ? (
-                  <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 6, color: "#92400E", padding: "8px 10px" }}>
-                    ⚠ First-time mode will create {importPreview.rows.length} new inactive user records. Only use this once during initial setup.
-                  </div>
-                ) : null}
-              </>
+            {csvMismatch === "looks-like-leavers" ? (
+              <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 6, color: "#92400E", padding: "8px 10px", display: "flex", flexDirection: "column", gap: 8 }}>
+                <span>⚠ This file appears to contain leavers (most rows have a last_working_date). Did you mean to click &apos;Import Leavers&apos; instead?</span>
+                <button 
+                  className="button" 
+                  onClick={() => { setImportPreview({ ...importPreview, fileType: "leavers" }); setCsvMismatch(null); }} 
+                  type="button"
+                  style={{ alignSelf: "flex-start" }}
+                >
+                  Switch to Leavers Import
+                </button>
+              </div>
+            ) : null}
+            {csvMismatch === "looks-like-active" ? (
+              <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", borderRadius: 6, color: "#92400E", padding: "8px 10px", display: "flex", flexDirection: "column", gap: 8 }}>
+                <span>⚠ This file appears to contain active employees (most rows have no last_working_date). Did you mean to click &apos;Import Active Staff&apos; instead?</span>
+                <button 
+                  className="button" 
+                  onClick={() => { setImportPreview({ ...importPreview, fileType: "active" }); setCsvMismatch(null); }} 
+                  type="button"
+                  style={{ alignSelf: "flex-start" }}
+                >
+                  Switch to Active Import
+                </button>
+              </div>
             ) : null}
             <button
               className="button button--primary"
               disabled={isImporting}
               onClick={confirmImport}
-              style={firstTimeImport && importPreview.fileType === "leavers" ? { background: "#B45309", borderColor: "#B45309" } : undefined}
               type="button"
             >
               {isImporting
                 ? `Importing ${importPreview.rows.length} users…`
-                : firstTimeImport && importPreview.fileType === "leavers"
-                  ? "Confirm First-Time Import"
-                  : "Confirm Import"}
+                : "Confirm Import"}
             </button>
-            <button className="button" onClick={() => { setFirstTimeImport(false); setImportPreview(null); }} type="button">Cancel</button>
+            <button className="button" onClick={() => { setCsvMismatch(null); setImportPreview(null); }} type="button">Cancel</button>
           </div>
         ) : null}
       </div>

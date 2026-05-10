@@ -1,11 +1,13 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import { AuthError, requireRole } from "../../../../../../lib/auth/requireRole";
 import { prisma } from "../../../../../../lib/db/prisma";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     await requireRole(["AuditTeam"]);
+
+    const includeInactive = request.nextUrl.searchParams.get("include_inactive") === "true";
 
     const [entities, users] = await Promise.all([
       prisma.entities.findMany({
@@ -27,7 +29,7 @@ export async function GET() {
         ],
       }),
       prisma.users.findMany({
-        where: {
+        where: includeInactive ? {} : {
           is_active: true,
         },
         select: {
@@ -38,10 +40,16 @@ export async function GET() {
           job_title: true,
           team_l2: true,
           is_internal_auditor: true,
+          is_active: true,
         },
-        orderBy: {
-          name: "asc",
-        },
+        orderBy: [
+          {
+            is_active: "desc",
+          },
+          {
+            name: "asc",
+          },
+        ],
       }),
     ]);
 

@@ -1605,34 +1605,33 @@ html[data-sidebar="collapsed"] {
   opacity: 1;
 }
 
-.audits-row-delete {
-  position: absolute;
-  top: 50%;
-  right: 52px;
-  transform: translateY(-50%);
+.audits-actions-cell {
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 4px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--text3);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.2s, background 0.2s;
-  font-size: 12px;
-  font-weight: 500;
+  gap: 8px;
 }
 
-.audits-row-wrap:hover .audits-row-delete {
+.audits-delete-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+  font-size: 16px;
+  transition: color 0.2s, transform 0.15s;
   opacity: 1;
 }
 
-.audits-row-delete:hover {
-  background: #fee;
-  color: #c00;
-  border-color: #fbb;
+.audits-delete-icon:hover {
+  color: #dc2626;
+  transform: scale(1.1);
+}
+
+.audits-delete-icon:active {
+  transform: scale(0.95);
 }
 
 .audits-row-copy-link:hover {
@@ -2197,6 +2196,20 @@ html[data-sidebar="collapsed"] {
   padding: 12px;
   background: #f0fdf4;
   color: #166534;
+  font-weight: 800;
+}
+
+.admin-warning-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid #F59E0B;
+  border-radius: 12px;
+  padding: 12px;
+  background: #FEF3C7;
+  color: #92400E;
   font-weight: 800;
 }
 

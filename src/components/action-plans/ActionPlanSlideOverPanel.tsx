@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type JSX, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { formatAuditLogEntry } from "../../lib/audit-log/formatAuditLogEntry";
 import { useAIAssistant } from "../../lib/ai-assistant-context";
@@ -276,6 +276,8 @@ export default function ActionPlanSlideOverPanel({
 
   // People assignment
   const [assigningType, setAssigningType] = useState<"owner" | "auditor" | null>(null);
+  const [includeFormerEmployees, setIncludeFormerEmployees] = useState(false);
+  const [localUserOptions, setLocalUserOptions] = useState<UserOption[]>(userOptions);
 
   // Audit log
   const [localAuditLogOpen, setLocalAuditLogOpen] = useState(auditLogOpen);
@@ -368,6 +370,29 @@ export default function ActionPlanSlideOverPanel({
       setDraftClosedAt(getTodayInputValue());
     }
   }, [draftStatus, draftClosedAt]);
+
+  // Fetch users when includeFormerEmployees toggle changes
+  useEffect(() => {
+    if (!canManageAssignments) {
+      setLocalUserOptions(userOptions);
+      return;
+    }
+
+    const query = includeFormerEmployees ? "?include_inactive=true" : "";
+    fetch(`/api/v1/records/new/options${query}`)
+      .then(async (response) => {
+        const body = await readResponseBody(response);
+        if (!response.ok) {
+          return userOptions;
+        }
+
+        return body && typeof body === "object" && "users" in body && Array.isArray(body.users)
+          ? (body.users as UserOption[])
+          : userOptions;
+      })
+      .then(setLocalUserOptions)
+      .catch(() => setLocalUserOptions(userOptions));
+  }, [includeFormerEmployees, canManageAssignments, userOptions]);
 
   // Sync local audit log state
   useEffect(() => {
@@ -851,7 +876,7 @@ export default function ActionPlanSlideOverPanel({
   }
 
   async function assignOwner(userId: string) {
-    const selectedUser = userOptions.find((option) => option.id === userId);
+    const selectedUser = localUserOptions.find((option) => option.id === userId);
     if (!selectedUser) return;
 
     const response = await fetch(`/api/v1/action-plans/${actionPlan.id}/owners`, {
@@ -904,7 +929,7 @@ export default function ActionPlanSlideOverPanel({
   }
 
   async function assignFollowUpAuditor(userId: string) {
-    const selectedUser = userOptions.find((option) => option.id === userId);
+    const selectedUser = localUserOptions.find((option) => option.id === userId);
     if (!selectedUser) return;
 
     const response = await fetch(`/api/v1/action-plans/${actionPlan.id}/follow-up-auditors`, {
@@ -1697,6 +1722,14 @@ export default function ActionPlanSlideOverPanel({
                 {canManageAssignments ? (
                   assigningType === "owner" ? (
                     <div className="assignment-inline-form">
+                      <label style={{ fontSize: "12px", display: "flex", alignItems: "center", gap: "6px", marginBottom: "8px" }}>
+                        <input
+                          type="checkbox"
+                          checked={includeFormerEmployees}
+                          onChange={(event) => setIncludeFormerEmployees(event.target.checked)}
+                        />
+                        Include former employees
+                      </label>
                       <select
                         defaultValue=""
                         onChange={(event) => {
@@ -1709,14 +1742,29 @@ export default function ActionPlanSlideOverPanel({
                         <option disabled value="">
                           Select owner...
                         </option>
-                        {userOptions
+                        {localUserOptions
                           .filter((u) => !actionPlan.action_plan_owners.some((o) => o.user.id === u.id))
-                          .map((option) => (
-                            <option key={option.id} value={option.id}>
-                              {option.name}
-                              {option.department ? ` - ${option.department}` : ""}
-                            </option>
-                          ))}
+                          .reduce((acc, option, index, arr) => {
+                            const prevOption = arr[index - 1];
+                            if (prevOption?.is_active && !option.is_active) {
+                              acc.push(
+                                <option key="divider" disabled style={{ borderTop: "1px solid var(--border)", padding: "0" }}>
+                                  ──────────
+                                </option>
+                              );
+                            }
+                            acc.push(
+                              <option 
+                                key={option.id} 
+                                value={option.id}
+                                style={!option.is_active ? { color: "var(--text3)" } : undefined}
+                              >
+                                {option.name}{!option.is_active ? " (former)" : ""}
+                                {option.department ? ` - ${option.department}` : ""}
+                              </option>
+                            );
+                            return acc;
+                          }, [] as JSX.Element[])}
                       </select>
                       <button onClick={() => setAssigningType(null)} type="button">
                         Cancel
@@ -1756,6 +1804,14 @@ export default function ActionPlanSlideOverPanel({
                 {canManageAssignments ? (
                   assigningType === "auditor" ? (
                     <div className="assignment-inline-form">
+                      <label style={{ fontSize: "12px", display: "flex", alignItems: "center", gap: "6px", marginBottom: "8px" }}>
+                        <input
+                          type="checkbox"
+                          checked={includeFormerEmployees}
+                          onChange={(event) => setIncludeFormerEmployees(event.target.checked)}
+                        />
+                        Include former employees
+                      </label>
                       <select
                         defaultValue=""
                         onChange={(event) => {
@@ -1768,18 +1824,33 @@ export default function ActionPlanSlideOverPanel({
                         <option disabled value="">
                           Select auditor...
                         </option>
-                        {userOptions
+                        {localUserOptions
                           .filter(
                             (u) =>
                               u.is_internal_auditor &&
                               !actionPlan.action_plan_follow_up_auditors.some((a) => a.user.id === u.id),
                           )
-                          .map((option) => (
-                            <option key={option.id} value={option.id}>
-                              {option.name}
-                              {option.department ? ` - ${option.department}` : ""}
-                            </option>
-                          ))}
+                          .reduce((acc, option, index, arr) => {
+                            const prevOption = arr[index - 1];
+                            if (prevOption?.is_active && !option.is_active) {
+                              acc.push(
+                                <option key="divider" disabled style={{ borderTop: "1px solid var(--border)", padding: "0" }}>
+                                  ──────────
+                                </option>
+                              );
+                            }
+                            acc.push(
+                              <option 
+                                key={option.id} 
+                                value={option.id}
+                                style={!option.is_active ? { color: "var(--text3)" } : undefined}
+                              >
+                                {option.name}{!option.is_active ? " (former)" : ""}
+                                {option.department ? ` - ${option.department}` : ""}
+                              </option>
+                            );
+                            return acc;
+                          }, [] as JSX.Element[])}
                       </select>
                       <button onClick={() => setAssigningType(null)} type="button">
                         Cancel
@@ -2279,8 +2350,18 @@ function PersonRow({
         onMouseEnter={handleMouseEnter}
         onMouseLeave={() => setShowTooltip(false)}
       >
-        <span className="person-avatar">{getInitials(user.name)}</span>
-        <span className="person-name">{user.name}</span>
+        <span 
+          className="person-avatar"
+          style={user.is_active === false ? { opacity: 0.7 } : undefined}
+        >
+          {getInitials(user.name)}
+        </span>
+        <span 
+          className="person-name"
+          style={user.is_active === false ? { color: "var(--text3)" } : undefined}
+        >
+          {user.name}{user.is_active === false ? " (former)" : ""}
+        </span>
         <span className={`person-role-badge person-role-badge--${roleBadge.toLowerCase().replace(/\s+/g, "-")}`}>
           {roleBadge}
         </span>
@@ -2335,8 +2416,17 @@ function PersonRow({
           ) : null}
           <div className="person-tooltip-divider" />
           <div className="person-tooltip-row">
-            <span className="person-status-dot person-status-dot--active" />
-            Active
+            {user.is_active === false ? (
+              <>
+                <span className="person-status-dot" style={{ backgroundColor: "#71717a" }} />
+                Inactive
+              </>
+            ) : (
+              <>
+                <span className="person-status-dot person-status-dot--active" />
+                Active
+              </>
+            )}
           </div>
         </div>
       ) : null}
