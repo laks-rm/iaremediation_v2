@@ -288,19 +288,22 @@ model action_plan_line_managers {
 }
 
 model evidence {
-  id             String       @id @default(uuid()) @db.Uuid
-  action_plan_id String       @db.Uuid
-  filename       String
-  original_name  String
-  file_path      String
-  file_size      Int
-  mime_type      String
-  description    String?
-  uploaded_by_id String       @db.Uuid
-  is_deleted     Boolean      @default(false)
-  created_at     DateTime     @default(now())
-  action_plan    action_plans @relation(fields: [action_plan_id], references: [id], onDelete: Cascade)
-  uploaded_by    users        @relation("evidence_uploaded_by", fields: [uploaded_by_id], references: [id])
+  id               String       @id @default(uuid()) @db.Uuid
+  action_plan_id   String       @db.Uuid
+  evidence_type    String       @default("file")
+  filename         String?
+  original_name    String?
+  file_path        String?
+  file_size        Int?
+  mime_type        String?
+  link_url         String?
+  link_source_type String?
+  description      String?
+  uploaded_by_id   String       @db.Uuid
+  is_deleted       Boolean      @default(false)
+  created_at       DateTime     @default(now())
+  action_plan      action_plans @relation(fields: [action_plan_id], references: [id], onDelete: Cascade)
+  uploaded_by      users        @relation("evidence_uploaded_by", fields: [uploaded_by_id], references: [id])
 }
 
 model comments {

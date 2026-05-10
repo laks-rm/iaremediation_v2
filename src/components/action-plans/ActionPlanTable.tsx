@@ -72,13 +72,18 @@ export type DashboardComment = {
 
 type DashboardEvidence = {
   id: string;
-  filename: string;
-  original_name: string;
-  file_path: string;
-  file_size: number;
+  evidence_type?: string;
+  filename: string | null;
+  original_name: string | null;
+  file_path: string | null;
+  file_size: number | null;
+  mime_type?: string | null;
+  link_url?: string | null;
+  link_source_type?: string | null;
   description: string | null;
   created_at: string;
   uploaded_by: {
+    id?: string;
     name: string;
   };
 };

@@ -216,6 +216,32 @@ export function getAuditLogChangeSummary(entry: AuditLogLike) {
   }
 
   if (entry.action === "EvidenceUpload" || entry.action === "EvidenceReplace") {
+    const evidenceType = getJsonString(entry.after_json, "evidence_type") ?? "file";
+    const isLink = evidenceType === "link";
+
+    if (isLink) {
+      const description = getJsonString(entry.after_json, "description") ?? "link";
+      const linkUrl = getJsonString(entry.after_json, "link_url");
+      let hostname = "unknown";
+
+      if (linkUrl) {
+        try {
+          hostname = new URL(linkUrl).hostname;
+        } catch {
+          hostname = "unknown";
+        }
+      }
+
+      // Truncate description to 60 characters
+      const truncatedDescription =
+        description.length > 60 ? `${description.slice(0, 60)}...` : description;
+
+      return {
+        title: `Link: ${truncatedDescription} (${hostname})`,
+        detail: entry.action === "EvidenceReplace" ? "Link evidence replaced" : "Link evidence added",
+      };
+    }
+
     const filename =
       getJsonString(entry.after_json, "original_name") ??
       getJsonString(entry.before_json, "original_name") ??
@@ -230,6 +256,20 @@ export function getAuditLogChangeSummary(entry: AuditLogLike) {
   }
 
   if (entry.action === "Delete") {
+    const evidenceType = getJsonString(entry.before_json, "evidence_type") ?? "file";
+    const isLink = evidenceType === "link";
+
+    if (isLink) {
+      const description = getJsonString(entry.before_json, "description") ?? "link";
+      const truncatedDescription =
+        description.length > 60 ? `${description.slice(0, 60)}...` : description;
+
+      return {
+        title: "Link evidence removed",
+        detail: truncatedDescription,
+      };
+    }
+
     const snippet =
       getJsonString(entry.before_json, "original_name") ??
       getJsonString(entry.before_json, "description") ??

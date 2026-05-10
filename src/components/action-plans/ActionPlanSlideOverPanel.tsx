@@ -273,6 +273,10 @@ export default function ActionPlanSlideOverPanel({
   const [analysisDrafts, setAnalysisDrafts] = useState<Record<string, string>>({});
   const [analysisErrors, setAnalysisErrors] = useState<Record<string, string>>({});
   const [previewEvidence, setPreviewEvidence] = useState<DashboardEvidence | null>(null);
+  const [evidenceMode, setEvidenceMode] = useState<"file" | "link">("file");
+  const [linkUrl, setLinkUrl] = useState("");
+  const [linkDescription, setLinkDescription] = useState("");
+  const [isSubmittingLink, setIsSubmittingLink] = useState(false);
 
   // People assignment
   const [assigningType, setAssigningType] = useState<"owner" | "auditor" | null>(null);
@@ -736,6 +740,59 @@ export default function ActionPlanSlideOverPanel({
     await postMutationAuditLogSync(actionPlan);
   }
 
+  async function submitLinkEvidence() {
+    setEvidenceError("");
+    setIsSubmittingLink(true);
+
+    try {
+      const response = await fetch(`/api/v1/action-plans/${actionPlan.id}/evidence`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "link",
+          url: linkUrl.trim(),
+          description: linkDescription.trim(),
+        }),
+      });
+
+      const body = await readResponseBody(response);
+
+      if (!response.ok) {
+        setEvidenceError(
+          typeof body === "object" && body && "error" in body
+            ? String(body.error)
+            : "Unable to add link evidence.",
+        );
+        return;
+      }
+
+      toast.success("Link evidence added.");
+      setLinkUrl("");
+      setLinkDescription("");
+      setEvidenceMode("file");
+
+      // Update local state
+      if (body && typeof body === "object" && "evidence" in body) {
+        const newEvidence = body.evidence as DashboardEvidence;
+
+        if (process.env.NODE_ENV === "development" && !newEvidence.uploaded_by) {
+          console.warn("[ActionPlan] Evidence missing uploaded_by relation:", newEvidence.id);
+        }
+
+        patchActionPlanLocal(actionPlan.id, {
+          evidence: [...actionPlan.evidence, newEvidence],
+          evidence_count: actionPlan.evidence_count + 1,
+        });
+      }
+
+      await postMutationAuditLogSync(actionPlan);
+    } catch (error) {
+      setEvidenceError(error instanceof Error ? error.message : "Unable to add link evidence.");
+    } finally {
+      setIsSubmittingLink(false);
+    }
+  }
+
   async function deleteEvidence(evidence: DashboardEvidence) {
     try {
       const response = await fetch(
@@ -1082,6 +1139,36 @@ export default function ActionPlanSlideOverPanel({
     if (lower.match(/\.(jpg|jpeg|png|gif|webp)$/)) return "🖼️";
     if (lower.match(/\.(xls|xlsx|csv)$/)) return "📊";
     return "📎";
+  }
+
+  // Helper for link source icons
+  function getLinkIcon(sourceType: string) {
+    const icons: Record<string, string> = {
+      google_drive: "📁",
+      slack: "💬",
+      confluence: "📖",
+      notion: "📝",
+      jira: "🐛",
+      hubspot: "🔗",
+      salesforce: "☁️",
+      github: "🔗",
+      figma: "🎨",
+      youtube: "🎥",
+      loom: "🎥",
+      zoom: "📹",
+      teams: "👥",
+      other: "🔗",
+    };
+    return icons[sourceType] ?? "🔗";
+  }
+
+  // Helper to get hostname from URL
+  function getUrlHostname(url: string) {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return url;
+    }
   }
 
   return (
@@ -1921,29 +2008,121 @@ export default function ActionPlanSlideOverPanel({
               {/* Upload dropzone */}
               {canEdit ? (
                 <div className="detail-field">
-                  <div
-                    className="evidence-dropzone"
-                    onClick={() => evidenceInputRef.current?.click()}
-                  >
-                    <span className="evidence-dropzone-icon">📎</span>
-                    <span className="evidence-dropzone-text">
-                      Click to upload or drag and drop
-                    </span>
-                    <input
-                      className="evidence-description-input"
-                      type="text"
-                      placeholder="What does this file show? (optional)"
-                      value={evidenceDescription}
-                      onChange={(event) => setEvidenceDescription(event.target.value)}
-                      onClick={(event) => event.stopPropagation()}
-                    />
+                  {/* Mode toggle */}
+                  <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+                    <button
+                      className={evidenceMode === "file" ? "button button--primary" : "button"}
+                      onClick={() => {
+                        setEvidenceMode("file");
+                        setEvidenceError("");
+                      }}
+                      type="button"
+                      style={{ flex: 1 }}
+                    >
+                      Upload file
+                    </button>
+                    <button
+                      className={evidenceMode === "link" ? "button button--primary" : "button"}
+                      onClick={() => {
+                        setEvidenceMode("link");
+                        setEvidenceError("");
+                      }}
+                      type="button"
+                      style={{ flex: 1 }}
+                    >
+                      Add link
+                    </button>
                   </div>
-                  <input
-                    hidden
-                    ref={evidenceInputRef}
-                    type="file"
-                    onChange={(event) => uploadEvidence(event.target.files?.[0])}
-                  />
+
+                  {evidenceMode === "file" ? (
+                    <>
+                      <div
+                        className="evidence-dropzone"
+                        onClick={() => evidenceInputRef.current?.click()}
+                      >
+                        <span className="evidence-dropzone-icon">📎</span>
+                        <span className="evidence-dropzone-text">
+                          Click to upload or drag and drop
+                        </span>
+                        <input
+                          className="evidence-description-input"
+                          type="text"
+                          placeholder="What does this file show? (optional)"
+                          value={evidenceDescription}
+                          onChange={(event) => setEvidenceDescription(event.target.value)}
+                          onClick={(event) => event.stopPropagation()}
+                        />
+                      </div>
+                      <input
+                        hidden
+                        ref={evidenceInputRef}
+                        type="file"
+                        onChange={(event) => uploadEvidence(event.target.files?.[0])}
+                      />
+                    </>
+                  ) : (
+                    <div className="link-evidence-form" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                      <div>
+                        <label htmlFor="link-url" style={{ display: "block", marginBottom: "4px", fontSize: "13px", fontWeight: 500 }}>
+                          URL
+                        </label>
+                        <input
+                          id="link-url"
+                          type="url"
+                          placeholder="https://..."
+                          value={linkUrl}
+                          onChange={(event) => {
+                            setLinkUrl(event.target.value);
+                            setEvidenceError("");
+                          }}
+                          style={{ width: "100%" }}
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="link-description" style={{ display: "block", marginBottom: "4px", fontSize: "13px", fontWeight: 500 }}>
+                          What does this link show? (required)
+                        </label>
+                        <input
+                          id="link-description"
+                          type="text"
+                          placeholder="Describe what this link contains..."
+                          value={linkDescription}
+                          onChange={(event) => {
+                            setLinkDescription(event.target.value);
+                            setEvidenceError("");
+                          }}
+                          style={{ width: "100%" }}
+                        />
+                      </div>
+                      <div style={{ display: "flex", gap: "8px" }}>
+                        <button
+                          className="button button--primary"
+                          disabled={
+                            isSubmittingLink ||
+                            !linkUrl.trim().startsWith("https://") ||
+                            linkDescription.trim().length < 10
+                          }
+                          onClick={submitLinkEvidence}
+                          type="button"
+                        >
+                          {isSubmittingLink ? "Adding..." : "Add link"}
+                        </button>
+                        <button
+                          className="button"
+                          disabled={isSubmittingLink}
+                          onClick={() => {
+                            setEvidenceMode("file");
+                            setLinkUrl("");
+                            setLinkDescription("");
+                            setEvidenceError("");
+                          }}
+                          type="button"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {evidenceError ? <span className="field-error">{evidenceError}</span> : null}
                 </div>
               ) : null}
@@ -1953,121 +2132,161 @@ export default function ActionPlanSlideOverPanel({
                 <div className="detail-field">
                   <label>Uploaded files ({actionPlan.evidence_count})</label>
                   <div className="evidence-list">
-                    {actionPlan.evidence.map((evidence) => (
-                      <div key={evidence.id} className="evidence-item">
-                        <div className="evidence-item-header">
-                          <span className="evidence-icon">{getFileIcon(evidence.original_name)}</span>
-                          <div className="evidence-item-info">
-                            <a
-                              href={`/api/v1/action-plans/${actionPlan.id}/evidence/${evidence.id}/download`}
-                              rel="noreferrer"
-                              target="_blank"
-                              className="evidence-filename"
-                            >
-                              {evidence.original_name}
-                            </a>
-                            <div className="evidence-meta">
-                              {formatFileSize(evidence.file_size)} · {evidence.uploaded_by?.name ?? "Unknown user"} ·{" "}
-                              {formatDate(evidence.created_at)}
-                              {evidence.description ? (
+                    {actionPlan.evidence.map((evidence) => {
+                      const isLink = evidence.evidence_type === "link";
+                      const canDelete =
+                        user?.role === "AuditTeam" || evidence.uploaded_by?.id === user?.id;
+
+                      return (
+                        <div key={evidence.id} className="evidence-item">
+                          <div className="evidence-item-header">
+                            <span className="evidence-icon">
+                              {isLink
+                                ? getLinkIcon(evidence.link_source_type ?? "other")
+                                : getFileIcon(evidence.original_name ?? "")}
+                            </span>
+                            <div className="evidence-item-info">
+                              {isLink ? (
                                 <>
-                                  {" · "}
-                                  <em>{evidence.description}</em>
+                                  <a
+                                    href={evidence.link_url ?? "#"}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="evidence-filename"
+                                  >
+                                    {evidence.description}
+                                  </a>
+                                  <div className="evidence-meta">
+                                    {getUrlHostname(evidence.link_url ?? "")} ·{" "}
+                                    {evidence.uploaded_by?.name ?? "Unknown user"} ·{" "}
+                                    {formatDate(evidence.created_at)}
+                                  </div>
                                 </>
+                              ) : (
+                                <>
+                                  <a
+                                    href={`/api/v1/action-plans/${actionPlan.id}/evidence/${evidence.id}/download`}
+                                    rel="noreferrer"
+                                    target="_blank"
+                                    className="evidence-filename"
+                                  >
+                                    {evidence.original_name}
+                                  </a>
+                                  <div className="evidence-meta">
+                                    {formatFileSize(evidence.file_size ?? 0)} ·{" "}
+                                    {evidence.uploaded_by?.name ?? "Unknown user"} ·{" "}
+                                    {formatDate(evidence.created_at)}
+                                    {evidence.description ? (
+                                      <>
+                                        {" · "}
+                                        <em>{evidence.description}</em>
+                                      </>
+                                    ) : null}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                            <div className="evidence-item-actions">
+                              {!isLink ? (
+                                <>
+                                  <button
+                                    className="evidence-action-button"
+                                    onClick={() => setPreviewEvidence(evidence)}
+                                    type="button"
+                                  >
+                                    Preview
+                                  </button>
+                                  {canEditFinding ? (
+                                    <button
+                                      className="evidence-action-button evidence-action-button--ai"
+                                      onClick={() => analyzeEvidence(evidence)}
+                                      disabled={analyzingEvidenceId === evidence.id}
+                                      type="button"
+                                    >
+                                      {analyzingEvidenceId === evidence.id
+                                        ? "◌ Analyzing…"
+                                        : "✦ AI"}
+                                    </button>
+                                  ) : null}
+                                </>
+                              ) : null}
+                              {canDelete ? (
+                                <button
+                                  className="evidence-action-button evidence-action-button--danger"
+                                  onClick={() => {
+                                    const confirmMessage = isLink
+                                      ? `Delete link: ${evidence.description}?`
+                                      : `Delete ${evidence.original_name}?`;
+                                    if (confirm(confirmMessage)) {
+                                      deleteEvidence(evidence);
+                                    }
+                                  }}
+                                  type="button"
+                                >
+                                  ×
+                                </button>
                               ) : null}
                             </div>
                           </div>
-                          <div className="evidence-item-actions">
-                            <button
-                              className="evidence-action-button"
-                              onClick={() => setPreviewEvidence(evidence)}
-                              type="button"
-                            >
-                              Preview
-                            </button>
-                            {canEditFinding ? (
-                              <button
-                                className="evidence-action-button evidence-action-button--ai"
-                                onClick={() => analyzeEvidence(evidence)}
-                                disabled={analyzingEvidenceId === evidence.id}
-                                type="button"
-                              >
-                                {analyzingEvidenceId === evidence.id ? "◌ Analyzing…" : "✦ AI"}
-                              </button>
-                            ) : null}
-                            {canEditFinding ? (
-                              <button
-                                className="evidence-action-button evidence-action-button--danger"
-                                onClick={() => {
-                                  if (confirm(`Delete ${evidence.original_name}?`)) {
-                                    deleteEvidence(evidence);
-                                  }
-                                }}
-                                type="button"
-                              >
-                                ×
-                              </button>
-                            ) : null}
-                          </div>
-                        </div>
 
-                        {analysisErrors[evidence.id] ? (
-                          <div className="field-error">{analysisErrors[evidence.id]}</div>
-                        ) : null}
+                          {analysisErrors[evidence.id] ? (
+                            <div className="field-error">{analysisErrors[evidence.id]}</div>
+                          ) : null}
 
-                        {analysisDrafts[evidence.id] !== undefined ? (
-                          <div className="evidence-analysis-draft">
-                            <textarea
-                              value={analysisDrafts[evidence.id]}
-                              onChange={(event) =>
-                                setAnalysisDrafts((current) => ({
-                                  ...current,
-                                  [evidence.id]: event.target.value,
-                                }))
-                              }
-                              style={{ minHeight: "120px" }}
-                            />
-                            <div style={{ display: "flex", gap: "8px" }}>
-                              <button
-                                className="button button--primary"
-                                onClick={async () => {
-                                  const analysis = analysisDrafts[evidence.id]?.trim();
-                                  if (!analysis) return;
-                                  const createdComment = await postCommentText(
-                                    `AI Evidence Analysis — ${evidence.original_name}:\n\n${analysis}`,
-                                  );
-                                  if (createdComment) {
-                                    addCommentLocal(actionPlan.id, createdComment);
+                          {analysisDrafts[evidence.id] !== undefined ? (
+                            <div className="evidence-analysis-draft">
+                              <textarea
+                                value={analysisDrafts[evidence.id]}
+                                onChange={(event) =>
+                                  setAnalysisDrafts((current) => ({
+                                    ...current,
+                                    [evidence.id]: event.target.value,
+                                  }))
+                                }
+                                style={{ minHeight: "120px" }}
+                              />
+                              <div style={{ display: "flex", gap: "8px" }}>
+                                <button
+                                  className="button button--primary"
+                                  onClick={async () => {
+                                    const analysis = analysisDrafts[evidence.id]?.trim();
+                                    if (!analysis) return;
+                                    const createdComment = await postCommentText(
+                                      `AI Evidence Analysis — ${evidence.original_name}:\n\n${analysis}`,
+                                    );
+                                    if (createdComment) {
+                                      addCommentLocal(actionPlan.id, createdComment);
+                                      setAnalysisDrafts((current) => {
+                                        const next = { ...current };
+                                        delete next[evidence.id];
+                                        return next;
+                                      });
+                                      toast.success("Analysis saved to comments");
+                                    }
+                                  }}
+                                  type="button"
+                                >
+                                  Save as Comment
+                                </button>
+                                <button
+                                  className="button"
+                                  onClick={() =>
                                     setAnalysisDrafts((current) => {
                                       const next = { ...current };
                                       delete next[evidence.id];
                                       return next;
-                                    });
-                                    toast.success("Analysis saved to comments");
+                                    })
                                   }
-                                }}
-                                type="button"
-                              >
-                                Save as Comment
-                              </button>
-                              <button
-                                className="button"
-                                onClick={() =>
-                                  setAnalysisDrafts((current) => {
-                                    const next = { ...current };
-                                    delete next[evidence.id];
-                                    return next;
-                                  })
-                                }
-                                type="button"
-                              >
-                                Dismiss
-                              </button>
+                                  type="button"
+                                >
+                                  Dismiss
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                        ) : null}
-                      </div>
-                    ))}
+                          ) : null}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               ) : (

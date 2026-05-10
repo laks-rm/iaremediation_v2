@@ -14,6 +14,10 @@ import {
 import { writeAuditLog } from "../../../../../../lib/audit-log/writeAuditLog";
 import { AuthError, requireRole } from "../../../../../../lib/auth/requireRole";
 import { prisma } from "../../../../../../lib/db/prisma";
+import {
+  detectLinkSource,
+  validateEvidenceUrl,
+} from "../../../../../../lib/evidence/linkSource";
 import { uploadFile } from "../../../../../../lib/storage";
 
 export const maxDuration = 60;
@@ -85,6 +89,72 @@ export async function POST(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    const contentType = request.headers.get("content-type") || "";
+
+    // Handle link evidence (JSON body)
+    if (contentType.includes("application/json")) {
+      const body = (await request.json()) as {
+        type?: string;
+        url?: string;
+        description?: string;
+      };
+
+      if (body.type !== "link") {
+        return NextResponse.json({ error: "Invalid evidence type" }, { status: 400 });
+      }
+
+      // Validate URL
+      const urlError = validateEvidenceUrl(body.url ?? "");
+      if (urlError) {
+        return NextResponse.json({ error: urlError }, { status: 400 });
+      }
+
+      // Validate description (required for links, minimum 10 chars)
+      const description = (body.description ?? "").trim();
+      if (description.length < 10) {
+        return NextResponse.json(
+          { error: "Description is required and must be at least 10 characters" },
+          { status: 400 },
+        );
+      }
+
+      const url = (body.url ?? "").trim();
+      const linkSourceType = detectLinkSource(url);
+
+      const evidence = await prisma.evidence.create({
+        data: {
+          action_plan_id: id,
+          evidence_type: "link",
+          link_url: url,
+          link_source_type: linkSourceType,
+          description,
+          uploaded_by_id: currentUser.id,
+          filename: null,
+          original_name: null,
+          file_path: null,
+          file_size: null,
+          mime_type: null,
+        },
+        include: {
+          uploaded_by: {
+            select: safeUserSelect,
+          },
+        },
+      });
+
+      await writeAuditLog({
+        userId: currentUser.id,
+        action: "EvidenceUpload",
+        entityType: "ActionPlan",
+        entityId: id,
+        afterJson: toAuditJson(evidence),
+        ipAddress: getClientIp(request),
+      });
+
+      return NextResponse.json({ evidence }, { status: 201 });
+    }
+
+    // Handle file evidence (multipart form data) - existing flow
     const formData = await request.formData();
     const file = formData.get("file");
     const description = formData.get("description");
@@ -107,6 +177,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const evidence = await prisma.evidence.create({
       data: {
         action_plan_id: id,
+        evidence_type: "file",
         filename: storedFilename,
         original_name: file.name,
         file_path: filePath,
