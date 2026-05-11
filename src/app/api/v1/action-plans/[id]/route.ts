@@ -22,6 +22,7 @@ const updateSchema = z.object({
   closure_remarks: z.string().nullable().optional(),
   closed_at: z.string().nullable().optional(),
   priority: z.enum(["High", "Moderate", "Low"]).nullable().optional(),
+  entity_ids: z.array(z.string().uuid()).optional(),
 });
 
 type RouteContext = {
@@ -61,6 +62,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const { id } = await context.params;
     const existing = await prisma.action_plans.findFirst({
       where: { id, is_deleted: false },
+      include: {
+        action_plan_entities: {
+          select: {
+            entity_id: true,
+          },
+        },
+      },
     });
 
     if (!existing) {
@@ -71,6 +79,27 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+    }
+
+    // Validate entity_ids if provided
+    if (parsed.data.entity_ids !== undefined) {
+      const validEntities = await prisma.entities.findMany({
+        where: {
+          id: {
+            in: parsed.data.entity_ids,
+          },
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (validEntities.length !== parsed.data.entity_ids.length) {
+        return NextResponse.json(
+          { error: "One or more entity IDs are invalid" },
+          { status: 400 },
+        );
+      }
     }
 
     const data: Prisma.action_plansUpdateInput = {};
@@ -109,26 +138,70 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (parsed.data.priority !== undefined) {
       data.priority = parsed.data.priority as Priority | null;
     }
-    const updated = await prisma.action_plans.update({
-      where: { id },
-      data,
-    });
 
-    await writeAuditLog({
-      userId: currentUser.id,
-      action: "Update",
-      entityType: "ActionPlan",
-      entityId: id,
-      beforeJson:
-        parsed.data.closed_at !== undefined
-          ? toAuditJson({ closed_at: existing.closed_at })
-          : toAuditJson(existing),
-      afterJson:
-        parsed.data.closed_at !== undefined
-          ? toAuditJson({ closed_at: updated.closed_at })
-          : toAuditJson(updated),
-      ipAddress: getClientIp(request),
-    });
+    // Handle entity updates in transaction
+    if (parsed.data.entity_ids !== undefined) {
+      const oldEntityIds = existing.action_plan_entities.map((ae) => ae.entity_id);
+
+      await prisma.$transaction([
+        // Update action plan fields
+        prisma.action_plans.update({
+          where: { id },
+          data,
+        }),
+        // Delete existing entity associations
+        prisma.action_plan_entities.deleteMany({
+          where: {
+            action_plan_id: id,
+          },
+        }),
+        // Insert new entity associations
+        ...(parsed.data.entity_ids.length > 0
+          ? [
+              prisma.action_plan_entities.createMany({
+                data: parsed.data.entity_ids.map((entity_id) => ({
+                  action_plan_id: id,
+                  entity_id,
+                })),
+              }),
+            ]
+          : []),
+      ]);
+
+      await writeAuditLog({
+        userId: currentUser.id,
+        action: "Update",
+        entityType: "ActionPlan",
+        entityId: id,
+        beforeJson: toAuditJson({ entity_ids: oldEntityIds }),
+        afterJson: toAuditJson({ entity_ids: parsed.data.entity_ids }),
+        ipAddress: getClientIp(request),
+      });
+    } else {
+      // No entity changes, just update action plan fields
+      const updated = await prisma.action_plans.update({
+        where: { id },
+        data,
+      });
+
+      if (Object.keys(data).length > 0 || parsed.data.closed_at !== undefined) {
+        await writeAuditLog({
+          userId: currentUser.id,
+          action: "Update",
+          entityType: "ActionPlan",
+          entityId: id,
+          beforeJson:
+            parsed.data.closed_at !== undefined
+              ? toAuditJson({ closed_at: existing.closed_at })
+              : toAuditJson(existing),
+          afterJson:
+            parsed.data.closed_at !== undefined
+              ? toAuditJson({ closed_at: updated.closed_at })
+              : toAuditJson(updated),
+          ipAddress: getClientIp(request),
+        });
+      }
+    }
 
     const payload = await getActionPlanPayload(id);
     return NextResponse.json(payload);

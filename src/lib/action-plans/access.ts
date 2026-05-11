@@ -205,6 +205,77 @@ export async function getActionPlanForAccess(id: string) {
   });
 }
 
+async function enrichAuditLogsWithEntityCodes(auditLogs: { before_json: unknown; after_json: unknown }[]) {
+  // Extract all entity IDs from audit logs
+  const entityIds = new Set<string>();
+  
+  for (const log of auditLogs) {
+    const beforeIds = Array.isArray((log.before_json as { entity_ids?: unknown })?.entity_ids)
+      ? ((log.before_json as { entity_ids: unknown[] }).entity_ids as string[])
+      : [];
+    const afterIds = Array.isArray((log.after_json as { entity_ids?: unknown })?.entity_ids)
+      ? ((log.after_json as { entity_ids: unknown[] }).entity_ids as string[])
+      : [];
+    
+    [...beforeIds, ...afterIds].forEach((id) => {
+      if (typeof id === "string") {
+        entityIds.add(id);
+      }
+    });
+  }
+
+  if (entityIds.size === 0) {
+    return auditLogs;
+  }
+
+  // Fetch entity codes
+  const entities = await prisma.entities.findMany({
+    where: {
+      id: {
+        in: Array.from(entityIds),
+      },
+    },
+    select: {
+      id: true,
+      code: true,
+    },
+  });
+
+  const entityMap = new Map(entities.map((e) => [e.id, e.code]));
+
+  // Enrich audit logs
+  return auditLogs.map((log) => {
+    const beforeIds = Array.isArray((log.before_json as { entity_ids?: unknown })?.entity_ids)
+      ? ((log.before_json as { entity_ids: unknown[] }).entity_ids as string[])
+      : null;
+    const afterIds = Array.isArray((log.after_json as { entity_ids?: unknown })?.entity_ids)
+      ? ((log.after_json as { entity_ids: unknown[] }).entity_ids as string[])
+      : null;
+
+    const enrichedBefore =
+      beforeIds !== null && typeof log.before_json === "object" && log.before_json !== null
+        ? {
+            ...(log.before_json as Record<string, unknown>),
+            entity_codes: beforeIds.map((id) => entityMap.get(id) ?? id),
+          }
+        : log.before_json;
+
+    const enrichedAfter =
+      afterIds !== null && typeof log.after_json === "object" && log.after_json !== null
+        ? {
+            ...(log.after_json as Record<string, unknown>),
+            entity_codes: afterIds.map((id) => entityMap.get(id) ?? id),
+          }
+        : log.after_json;
+
+    return {
+      ...log,
+      before_json: enrichedBefore,
+      after_json: enrichedAfter,
+    };
+  });
+}
+
 export async function getActionPlanPayload(id: string) {
   const actionPlan = await prisma.action_plans.findFirst({
     where: {
@@ -235,9 +306,11 @@ export async function getActionPlanPayload(id: string) {
     },
   });
 
+  const enrichedAuditLogs = await enrichAuditLogsWithEntityCodes(auditLogs);
+
   return {
     action_plan: enrichActionPlan(actionPlan),
-    audit_logs: auditLogs,
+    audit_logs: enrichedAuditLogs,
   };
 }
 

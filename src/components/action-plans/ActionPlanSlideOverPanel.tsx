@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { type JSX, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { formatAuditLogEntry } from "../../lib/audit-log/formatAuditLogEntry";
@@ -181,6 +182,7 @@ function AuditTypeBadge({ auditType }: { auditType?: AuditType | null }) {
 function getAuditLogColor(action: string) {
   if (action === "StatusChange") return "#2563eb";
   if (action.includes("owner") || action.includes("auditor")) return "#0d9488";
+  if (action.includes("Entity") || action.includes("entity") || action.includes("Entities")) return "#14b8a6";
   if (action.includes("target") || action.includes("Target")) return "#f59e0b";
   if (action === "EvidenceUpload" || action === "EvidenceReplace") return "#16a34a";
   if (action === "Delete") return "#dc2626";
@@ -283,6 +285,11 @@ export default function ActionPlanSlideOverPanel({
   const [includeFormerEmployees, setIncludeFormerEmployees] = useState(false);
   const [localUserOptions, setLocalUserOptions] = useState<UserOption[]>(userOptions);
 
+  // Entity assignment
+  const [assigningEntity, setAssigningEntity] = useState(false);
+  const [removingEntityId, setRemovingEntityId] = useState("");
+  const [allEntities, setAllEntities] = useState<{ id: string; code: string; full_name: string; is_active: boolean }[]>([]);
+
   // Audit log
   const [localAuditLogOpen, setLocalAuditLogOpen] = useState(auditLogOpen);
 
@@ -331,6 +338,18 @@ export default function ActionPlanSlideOverPanel({
   }, [actionPlan]);
 
   const completionPercent = (completionSignals.length / 5) * 100;
+
+  // Compute divergent entities (entities in action plan but not in parent audit)
+  const divergentEntities = useMemo(() => {
+    if (!audit || actionPlan.action_plan_entities.length === 0) {
+      return [];
+    }
+
+    const auditEntityIds = new Set(audit.audit_entities.map((ae) => ae.entity.id));
+    return actionPlan.action_plan_entities
+      .filter((ae) => !auditEntityIds.has(ae.entity.id))
+      .map((ae) => ae.entity);
+  }, [actionPlan.action_plan_entities, audit]);
 
   // Reset drafts when actionPlan changes, but preserve user edits
   useEffect(() => {
@@ -397,6 +416,25 @@ export default function ActionPlanSlideOverPanel({
       .then(setLocalUserOptions)
       .catch(() => setLocalUserOptions(userOptions));
   }, [includeFormerEmployees, canManageAssignments, userOptions]);
+
+  // Fetch entities when component mounts (only if can manage assignments)
+  useEffect(() => {
+    if (!canManageAssignments) return;
+
+    fetch("/api/v1/entities")
+      .then(async (response) => {
+        const body = await readResponseBody(response);
+        if (!response.ok) {
+          return [];
+        }
+
+        return body && typeof body === "object" && "entities" in body && Array.isArray(body.entities)
+          ? (body.entities as typeof allEntities)
+          : [];
+      })
+      .then(setAllEntities)
+      .catch(() => setAllEntities([]));
+  }, [canManageAssignments]);
 
   // Sync local audit log state
   useEffect(() => {
@@ -1039,6 +1077,76 @@ export default function ActionPlanSlideOverPanel({
     await postMutationAuditLogSync(actionPlan);
   }
 
+  async function addActionPlanEntity(entityId: string) {
+    const selectedEntity = allEntities.find((e) => e.id === entityId);
+    if (!selectedEntity) return;
+
+    const currentEntityIds = actionPlan.action_plan_entities.map((ae) => ae.entity.id);
+    const newEntityIds = [...currentEntityIds, entityId];
+
+    const response = await fetch(`/api/v1/action-plans/${actionPlan.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entity_ids: newEntityIds }),
+    });
+    const body = await readResponseBody(response);
+
+    if (!response.ok) {
+      toast.error(getResponseError(body, "Unable to add entity."));
+      return;
+    }
+
+    // Update local state
+    patchActionPlanLocal(actionPlan.id, {
+      action_plan_entities: [
+        ...actionPlan.action_plan_entities,
+        {
+          entity_id: entityId,
+          entity: {
+            id: selectedEntity.id,
+            code: selectedEntity.code,
+            full_name: selectedEntity.full_name,
+          },
+        },
+      ],
+    });
+
+    setAssigningEntity(false);
+    await postMutationAuditLogSync(actionPlan);
+    toast.success("Entity added successfully");
+  }
+
+  async function removeActionPlanEntity() {
+    if (!removingEntityId) return;
+
+    const currentEntityIds = actionPlan.action_plan_entities.map((ae) => ae.entity.id);
+    const newEntityIds = currentEntityIds.filter((id) => id !== removingEntityId);
+
+    const response = await fetch(`/api/v1/action-plans/${actionPlan.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entity_ids: newEntityIds }),
+    });
+    const body = await readResponseBody(response);
+
+    if (!response.ok) {
+      toast.error(getResponseError(body, "Unable to remove entity."));
+      setRemovingEntityId("");
+      return;
+    }
+
+    // Update local state
+    patchActionPlanLocal(actionPlan.id, {
+      action_plan_entities: actionPlan.action_plan_entities.filter(
+        (ae) => ae.entity.id !== removingEntityId,
+      ),
+    });
+
+    setRemovingEntityId("");
+    await postMutationAuditLogSync(actionPlan);
+    toast.success("Entity removed successfully");
+  }
+
   async function updateFinding(patch: Record<string, unknown>) {
     if (!actionPlan.finding?.id) return;
 
@@ -1191,6 +1299,20 @@ export default function ActionPlanSlideOverPanel({
         title="Delete action plan?"
         onCancel={() => setShowDeleteDialog(false)}
         onConfirm={handleDelete}
+      />
+      <ConfirmDialog
+        cancelLabel="Cancel"
+        confirmLabel="Remove entity"
+        isDangerous
+        isOpen={Boolean(removingEntityId)}
+        message={
+          removingEntityId
+            ? `Remove ${actionPlan.action_plan_entities.find((ae) => ae.entity.id === removingEntityId)?.entity.code} from this action plan?`
+            : ""
+        }
+        title="Remove entity from action plan?"
+        onCancel={() => setRemovingEntityId("")}
+        onConfirm={removeActionPlanEntity}
       />
 
       <aside className="action-plan-slide-over" ref={panelRef} style={{ width: `${panelWidth}px` }}>
@@ -1429,6 +1551,23 @@ export default function ActionPlanSlideOverPanel({
             ) : (
               <span>Standalone action plan</span>
             )}
+            {actionPlan.action_plan_entities.length > 0 ? (
+              <>
+                {actionPlan.action_plan_entities.map(({ entity }) => (
+                  <span
+                    key={entity.id}
+                    className="context-chip"
+                    style={{
+                      background: "var(--teal-bg, #ccfbf1)",
+                      color: "var(--teal-text, #115e59)",
+                      border: "1px solid var(--teal-border, #5eead4)",
+                    }}
+                  >
+                    🏢 {entity.code}
+                  </span>
+                ))}
+              </>
+            ) : null}
             <span className="context-chip">{actionPlan.created_via}</span>
             {actionPlan.was_implemented_at_issuance ? (
               <span className="context-chip">✓ Implemented at issuance</span>
@@ -1973,6 +2112,136 @@ export default function ActionPlanSlideOverPanel({
                 ) : (
                   <p style={{ color: "var(--text3)", fontSize: "13px" }}>No line managers linked</p>
                 )}
+              </div>
+
+              {/* Entities section */}
+              <div className="detail-field">
+                <label>Entities</label>
+                {actionPlan.action_plan_entities.length > 0 ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                    {actionPlan.action_plan_entities.map(({ entity }) => (
+                      <div
+                        key={entity.id}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "8px 12px",
+                          background: "var(--surface2)",
+                          borderRadius: "6px",
+                        }}
+                      >
+                        <div>
+                          <strong style={{ fontSize: "14px" }}>{entity.code}</strong>
+                          <span style={{ color: "var(--text2)", fontSize: "13px", marginLeft: "8px" }}>
+                            ({entity.full_name})
+                          </span>
+                        </div>
+                        {canManageAssignments ? (
+                          <button
+                            className="audit-icon-button"
+                            onClick={() => setRemovingEntityId(entity.id)}
+                            style={{ color: "#dc2626" }}
+                            title="Remove entity"
+                            type="button"
+                          >
+                            ×
+                          </button>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p style={{ color: "var(--text3)", fontSize: "13px" }}>
+                    No entities assigned. This action plan is not scoped to any business unit.
+                  </p>
+                )}
+
+                {/* Entity divergence warning */}
+                {divergentEntities.length > 0 && audit ? (
+                  <div
+                    style={{
+                      padding: "12px",
+                      background: "#fef3c7",
+                      border: "1px solid #f59e0b",
+                      borderRadius: "8px",
+                      marginTop: "12px",
+                      fontSize: "13px",
+                      lineHeight: "1.5",
+                      color: "#78350f",
+                    }}
+                  >
+                    <strong style={{ color: "#92400e" }}>⚠ </strong>
+                    {divergentEntities.length === 1 ? (
+                      <>
+                        <strong>{divergentEntities[0].code}</strong> is not assigned to this action plan's parent
+                        audit (
+                        <Link
+                          href={`/audits/${audit.id}`}
+                          style={{ color: "#92400e", textDecoration: "underline" }}
+                        >
+                          {audit.name}
+                        </Link>
+                        ). Reports that filter by audit-level entities will not include this plan via that audit. You
+                        can update the audit from the audit detail page if needed.
+                      </>
+                    ) : (
+                      <>
+                        <strong>{divergentEntities.map((e) => e.code).join(", ")}</strong> are not assigned to this
+                        action plan's parent audit (
+                        <Link
+                          href={`/audits/${audit.id}`}
+                          style={{ color: "#92400e", textDecoration: "underline" }}
+                        >
+                          {audit.name}
+                        </Link>
+                        ). Reports that filter by audit-level entities will not include this plan via those entities.
+                        You can update the audit from the audit detail page if needed.
+                      </>
+                    )}
+                  </div>
+                ) : null}
+
+                <p style={{ color: "var(--text3)", fontSize: "12px", marginTop: "8px" }}>
+                  Entities determine which business units this action plan applies to. Defaults to the parent audit's entities at creation but can be changed per plan.
+                </p>
+
+                {canManageAssignments ? (
+                  assigningEntity ? (
+                    <div className="assignment-inline-form">
+                      <select
+                        defaultValue=""
+                        onChange={(event) => {
+                          if (event.target.value) {
+                            addActionPlanEntity(event.target.value);
+                          }
+                        }}
+                      >
+                        <option disabled value="">
+                          Select entity...
+                        </option>
+                        {allEntities
+                          .filter((e) => e.is_active && !actionPlan.action_plan_entities.some((ae) => ae.entity.id === e.id))
+                          .map((entity) => (
+                            <option key={entity.id} value={entity.id}>
+                              {entity.code} ({entity.full_name})
+                            </option>
+                          ))}
+                      </select>
+                      <button onClick={() => setAssigningEntity(false)} type="button">
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      className="assignment-add-button"
+                      onClick={() => setAssigningEntity(true)}
+                      type="button"
+                    >
+                      + Add entity
+                    </button>
+                  )
+                ) : null}
               </div>
 
               {/* Metadata row */}

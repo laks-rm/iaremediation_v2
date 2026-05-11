@@ -15,6 +15,7 @@ const updateAuditSchema = z.object({
     .nullable()
     .optional(),
   executive_summary: z.string().trim().nullable().optional(),
+  entity_ids: z.array(z.string().uuid()).optional(),
 });
 
 type RouteContext = {
@@ -162,10 +163,38 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         id,
         is_deleted: false,
       },
+      include: {
+        audit_entities: {
+          select: {
+            entity_id: true,
+          },
+        },
+      },
     });
 
     if (!existing) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    // Validate entity_ids if provided
+    if (parsed.data.entity_ids !== undefined) {
+      const validEntities = await prisma.entities.findMany({
+        where: {
+          id: {
+            in: parsed.data.entity_ids,
+          },
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (validEntities.length !== parsed.data.entity_ids.length) {
+        return NextResponse.json(
+          { error: "One or more entity IDs are invalid" },
+          { status: 400 },
+        );
+      }
     }
 
     const data: Prisma.auditsUpdateInput = {};
@@ -182,22 +211,71 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       data.executive_summary = nullableString(parsed.data.executive_summary);
     }
 
-    const updated = await prisma.audits.update({
-      where: {
-        id,
-      },
-      data,
-    });
+    // Handle entity updates in transaction
+    if (parsed.data.entity_ids !== undefined) {
+      const oldEntityIds = existing.audit_entities.map((ae) => ae.entity_id);
+      
+      await prisma.$transaction([
+        // Update audit fields
+        prisma.audits.update({
+          where: {
+            id,
+          },
+          data,
+        }),
+        // Delete existing entity associations
+        prisma.audit_entities.deleteMany({
+          where: {
+            audit_id: id,
+          },
+        }),
+        // Insert new entity associations
+        ...(parsed.data.entity_ids.length > 0
+          ? [
+              prisma.audit_entities.createMany({
+                data: parsed.data.entity_ids.map((entity_id) => ({
+                  audit_id: id,
+                  entity_id,
+                })),
+              }),
+            ]
+          : []),
+      ]);
 
-    await writeAuditLog({
-      userId: currentUser.id,
-      action: "Update",
-      entityType: "audits",
-      entityId: id,
-      beforeJson: toAuditJson(existing),
-      afterJson: toAuditJson(updated),
-      ipAddress: getClientIp(request),
-    });
+      const updated = await prisma.audits.findFirst({
+        where: { id },
+      });
+
+      await writeAuditLog({
+        userId: currentUser.id,
+        action: "Update",
+        entityType: "audits",
+        entityId: id,
+        beforeJson: toAuditJson({ entity_ids: oldEntityIds }),
+        afterJson: toAuditJson({ entity_ids: parsed.data.entity_ids }),
+        ipAddress: getClientIp(request),
+      });
+    } else {
+      // No entity changes, just update audit fields
+      const updated = await prisma.audits.update({
+        where: {
+          id,
+        },
+        data,
+      });
+
+      if (Object.keys(data).length > 0) {
+        await writeAuditLog({
+          userId: currentUser.id,
+          action: "Update",
+          entityType: "audits",
+          entityId: id,
+          beforeJson: toAuditJson(existing),
+          afterJson: toAuditJson(updated),
+          ipAddress: getClientIp(request),
+        });
+      }
+    }
 
     const audit = await getAudit(id);
     return NextResponse.json({ audit });

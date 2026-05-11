@@ -40,6 +40,15 @@ function getJsonBoolean(value: unknown, key: string) {
   return value[key] === true;
 }
 
+function getJsonArray(value: unknown, key: string) {
+  if (!isJsonRecord(value)) {
+    return null;
+  }
+
+  const item = value[key];
+  return Array.isArray(item) ? item : null;
+}
+
 function formatDate(value: string | null) {
   if (!value) {
     return "Not set";
@@ -187,6 +196,40 @@ export function getAuditLogChangeSummary(entry: AuditLogLike) {
         title: `Follow-up auditor removed: ${getJsonString(entry.after_json, "auditor_name") ?? "Unknown user"}`,
         detail: null,
       };
+    }
+
+    // Check for entity_ids changes
+    const beforeEntityCodes = getJsonArray(entry.before_json, "entity_codes");
+    const afterEntityCodes = getJsonArray(entry.after_json, "entity_codes");
+
+    if (beforeEntityCodes !== null || afterEntityCodes !== null) {
+      const beforeSet = new Set(beforeEntityCodes ?? []);
+      const afterSet = new Set(afterEntityCodes ?? []);
+      const added = (afterEntityCodes ?? []).filter((code) => !beforeSet.has(code));
+      const removed = (beforeEntityCodes ?? []).filter((code) => !afterSet.has(code));
+
+      if (added.length > 0 && removed.length === 0) {
+        return {
+          title: added.length === 1 ? `Entity added: ${added[0]}` : `Entities added: ${added.join(", ")}`,
+          detail: null,
+        };
+      }
+
+      if (removed.length > 0 && added.length === 0) {
+        return {
+          title:
+            removed.length === 1 ? `Entity removed: ${removed[0]}` : `Entities removed: ${removed.join(", ")}`,
+          detail: null,
+        };
+      }
+
+      if (added.length > 0 && removed.length > 0) {
+        const changes = [...added.map((code) => `+${code}`), ...removed.map((code) => `-${code}`)];
+        return {
+          title: `Entities updated: ${changes.join(", ")}`,
+          detail: null,
+        };
+      }
     }
 
     const changedFields = getChangedFieldNames(entry.before_json, entry.after_json);

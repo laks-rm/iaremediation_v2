@@ -150,6 +150,9 @@ export default function AuditDetailPage() {
   const [isUploadingReport, setIsUploadingReport] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [addingEntity, setAddingEntity] = useState(false);
+  const [removingEntityId, setRemovingEntityId] = useState("");
+  const [allEntities, setAllEntities] = useState<{ id: string; code: string; full_name: string; is_active: boolean }[]>([]);
 
   const loadAudit = useCallback(async () => {
     setIsLoading(true);
@@ -181,6 +184,23 @@ export default function AuditDetailPage() {
   }, [loadAudit]);
 
   const canEdit = role === "AuditTeam";
+
+  useEffect(() => {
+    async function fetchEntities() {
+      try {
+        const response = await fetch("/api/v1/entities");
+        const body = await readResponseBody(response);
+        if (response.ok) {
+          setAllEntities((body as { entities: typeof allEntities }).entities);
+        }
+      } catch {
+        // Silently fail - entity editing will just not be available
+      }
+    }
+    if (canEdit) {
+      fetchEntities();
+    }
+  }, [canEdit]);
   const allActionPlans = useMemo(
     () => audit?.findings.flatMap((finding) => finding.action_plans) ?? [],
     [audit],
@@ -393,6 +413,47 @@ export default function AuditDetailPage() {
     toast.success("Report removed successfully!");
     setRemoveReportOpen(false);
     await loadAudit();
+  }
+
+  async function addEntity(entityId: string) {
+    if (!audit) return;
+    const currentEntityIds = audit.audit_entities.map((ae) => ae.entity.id);
+    const newEntityIds = [...currentEntityIds, entityId];
+
+    const response = await fetch(`/api/v1/audits/${auditId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entity_ids: newEntityIds }),
+    });
+    const body = await readResponseBody(response);
+    if (!response.ok) {
+      setError(responseError(body, "Unable to add entity."));
+      return;
+    }
+    setAudit((body as { audit: AuditDetail }).audit);
+    setAddingEntity(false);
+    toast.success("Entity added successfully");
+  }
+
+  async function removeEntity() {
+    if (!audit || !removingEntityId) return;
+    const currentEntityIds = audit.audit_entities.map((ae) => ae.entity.id);
+    const newEntityIds = currentEntityIds.filter((id) => id !== removingEntityId);
+
+    const response = await fetch(`/api/v1/audits/${auditId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entity_ids: newEntityIds }),
+    });
+    const body = await readResponseBody(response);
+    if (!response.ok) {
+      setError(responseError(body, "Unable to remove entity."));
+      setRemovingEntityId("");
+      return;
+    }
+    setAudit((body as { audit: AuditDetail }).audit);
+    setRemovingEntityId("");
+    toast.success("Entity removed successfully");
   }
 
   if (isLoading) {
@@ -848,14 +909,75 @@ export default function AuditDetailPage() {
 
             <section className="audit-detail-card">
               <h2>Entities</h2>
-              <div className="audit-entity-list">
-                {audit.audit_entities.map(({ entity }) => (
-                  <div key={entity.id}>
-                    <span>{entity.code}</span>
-                    <strong>{entity.full_name}</strong>
+              {audit.audit_entities.length > 0 ? (
+                <div className="audit-entity-list">
+                  {audit.audit_entities.map(({ entity }) => (
+                    <div key={entity.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div>
+                        <span>{entity.code}</span>
+                        <strong>{entity.full_name}</strong>
+                      </div>
+                      {canEdit ? (
+                        <button
+                          className="audit-icon-button"
+                          onClick={() => setRemovingEntityId(entity.id)}
+                          style={{ color: "#dc2626", marginLeft: "8px" }}
+                          title="Remove entity"
+                          type="button"
+                        >
+                          ×
+                        </button>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={{ color: "var(--text3)", fontSize: "14px", marginBottom: "12px" }}>
+                  No entities assigned to this audit.
+                </p>
+              )}
+              {canEdit ? (
+                addingEntity ? (
+                  <div style={{ marginTop: "12px" }}>
+                    <select
+                      defaultValue=""
+                      onChange={(event) => {
+                        if (event.target.value) {
+                          addEntity(event.target.value);
+                        }
+                      }}
+                      style={{ width: "100%", marginBottom: "8px" }}
+                    >
+                      <option disabled value="">
+                        Select entity...
+                      </option>
+                      {allEntities
+                        .filter((e) => e.is_active && !audit.audit_entities.some((ae) => ae.entity.id === e.id))
+                        .map((entity) => (
+                          <option key={entity.id} value={entity.id}>
+                            {entity.code} ({entity.full_name})
+                          </option>
+                        ))}
+                    </select>
+                    <button
+                      className="button"
+                      onClick={() => setAddingEntity(false)}
+                      type="button"
+                    >
+                      Cancel
+                    </button>
                   </div>
-                ))}
-              </div>
+                ) : (
+                  <button
+                    className="button"
+                    onClick={() => setAddingEntity(true)}
+                    style={{ marginTop: "12px", width: "100%" }}
+                    type="button"
+                  >
+                    + Add entity
+                  </button>
+                )
+              ) : null}
             </section>
 
             <section className="audit-detail-card">
@@ -902,6 +1024,20 @@ export default function AuditDetailPage() {
           title="Remove this audit report?"
           onCancel={() => setRemoveReportOpen(false)}
           onConfirm={removeReport}
+        />
+        <ConfirmDialog
+          cancelLabel="Cancel"
+          confirmLabel="Remove entity"
+          isDangerous
+          isOpen={Boolean(removingEntityId)}
+          message={
+            removingEntityId && audit
+              ? `Remove ${audit.audit_entities.find((ae) => ae.entity.id === removingEntityId)?.entity.code} from this audit? This does not change which entities are assigned to existing action plans, but new action plans created from findings in this audit will no longer default to this entity.`
+              : ""
+          }
+          title="Remove entity from audit?"
+          onCancel={() => setRemovingEntityId("")}
+          onConfirm={removeEntity}
         />
       </div>
     </AppLayout>
