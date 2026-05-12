@@ -1,17 +1,12 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type MutableRefObject, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { formatAuditLogEntry } from "../../lib/audit-log/formatAuditLogEntry";
 import {
   AUDIT_TYPE_COLORS,
   AUDIT_TYPE_LABELS,
-  PRIORITY_COLORS,
-  STATUS_COLORS,
-  STATUS_LABELS,
 } from "../../lib/constants";
-import ColumnFilterPopover from "../dashboard/ColumnFilterPopover";
-import ConfirmDialog from "../ConfirmDialog";
 import EmptyState from "../EmptyState";
 import { useToast } from "../Toast";
 import ActionPlanSummary from "./ActionPlanSummary";
@@ -36,8 +31,7 @@ type DueBucket =
   | "due_this_month"
   | "future"
   | "no_date";
-type FilterColumn = "created_via" | "audit" | "owner" | "status" | "priority" | "due_bucket";
-type SortableColumn = FilterColumn | "evidence";
+type SortableColumn = "created_via" | "audit" | "owner" | "status" | "priority" | "due_bucket" | "evidence";
 export type SortBy = "title" | "audit" | "owner" | "status" | "priority" | "due_date" | "evidence_count";
 
 export type DashboardUser = {
@@ -242,7 +236,6 @@ export type ActionPlanTableProps = {
   user: DashboardUser | null;
   userOptions: UserOption[];
   onFilterChange: <K extends keyof Filters>(key: K, value: Filters[K]) => void;
-  onFiltersChange: (filters: Filters | ((current: Filters) => Filters)) => void;
   onGroupByAuditChange: (groupByAudit: boolean) => void;
   onSortChange: (sortBy: SortBy) => void;
   onExport: () => void;
@@ -257,36 +250,16 @@ export type ActionPlanTableProps = {
   sortBy: SortBy | null;
   sortDir: "asc" | "desc" | null;
   initialExpandedId?: string | null;
+  belowSearchSlot?: ReactNode;
+  serverMatchedCount?: number;
+  hasStackableFilters?: boolean;
+  onClearStackableFilters?: () => void;
+  stackableFiltersKey?: string;
 };
 
 const PAGE_SIZE = 50;
 const DASHBOARD_TABLE_COLUMNS = "2.1fr 1.3fr 1.4fr 1fr 0.8fr 1fr 0.6fr";
 const CLOSED_STATUSES: Status[] = ["Closed", "Dropped", "RiskAccepted"];
-const STATUS_ORDER: Status[] = [
-  "NotStarted",
-  "InProgress",
-  "PendingValidation",
-  "RiskAccepted",
-  "Dropped",
-  "Closed",
-];
-const PRIORITY_ORDER: Priority[] = ["High", "Moderate", "Low"];
-const CREATED_VIA_ORDER: CreatedVia[] = ["Manual", "AIIngestion", "Migration", "Standalone"];
-const DUE_BUCKET_OPTIONS: { key: DueBucket; label: string }[] = [
-  { key: "overdue_gt14", label: "Overdue >14 days" },
-  { key: "overdue_1to14", label: "Overdue 1-14 days" },
-  { key: "due_today", label: "Due today" },
-  { key: "due_this_week", label: "Due this week" },
-  { key: "due_this_month", label: "Due this month" },
-  { key: "future", label: "Future" },
-  { key: "no_date", label: "No date set" },
-];
-const CREATED_VIA_LABELS: Record<CreatedVia, string> = {
-  Manual: "Manual",
-  AIIngestion: "AI Ingestion",
-  Migration: "Migration",
-  Standalone: "Standalone",
-};
 const SORT_BY_COLUMN: Record<SortableColumn, SortBy> = {
   created_via: "title",
   audit: "audit",
@@ -295,15 +268,6 @@ const SORT_BY_COLUMN: Record<SortableColumn, SortBy> = {
   priority: "priority",
   due_bucket: "due_date",
   evidence: "evidence_count",
-};
-
-const STATUS_ACCENTS: Record<Status, string> = {
-  NotStarted: "#64748b",
-  InProgress: "#2563eb",
-  PendingValidation: "#d97706",
-  Closed: "#16a34a",
-  RiskAccepted: "#7c3aed",
-  Dropped: "#71717a",
 };
 
 function formatDate(value: string | null) {
@@ -443,44 +407,6 @@ function canEditActionPlan(user: DashboardUser | null, actionPlan: DashboardActi
   return actionPlan.action_plan_owners.some((owner) => owner.user.id === user.id);
 }
 
-function splitFilterValues(value: string) {
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function joinFilterValues(values: string[]) {
-  return [...new Set(values)].join(",");
-}
-
-function toggleDraftValue(values: string[], value: string, checked: boolean) {
-  if (checked) {
-    return values.includes(value) ? values : [...values, value];
-  }
-
-  return values.filter((item) => item !== value);
-}
-
-function formatSelectedValues(values: string[], lookup: Map<string, string>, fallback?: (value: string) => string) {
-  return values.map((value) => lookup.get(value) ?? fallback?.(value) ?? value).join(", ");
-}
-
-function getAvatarInitials(name: string) {
-  return name
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join("");
-}
-
-function getAvatarTone(name: string) {
-  const tones = ["blue", "amber", "green", "purple", "slate"];
-  const total = [...name].reduce((sum, character) => sum + character.charCodeAt(0), 0);
-  return tones[total % tones.length];
-}
-
 function EditableField({
   label,
   value,
@@ -615,7 +541,6 @@ export default function ActionPlanTable({
   user,
   userOptions,
   onFilterChange,
-  onFiltersChange,
   onGroupByAuditChange,
   onSortChange,
   onExport,
@@ -629,6 +554,11 @@ export default function ActionPlanTable({
   sortBy,
   sortDir,
   initialExpandedId,
+  belowSearchSlot = null,
+  serverMatchedCount = 0,
+  hasStackableFilters = false,
+  onClearStackableFilters,
+  stackableFiltersKey = "",
 }: ActionPlanTableProps) {
   const toast = useToast();
   const refreshTimerRef = useRef<number | null>(null);
@@ -661,7 +591,7 @@ export default function ActionPlanTable({
 
   useEffect(() => {
     setVisibleLimit(PAGE_SIZE);
-  }, [filters]);
+  }, [filters.q, filters.overdue, filters.assigned_to_me, stackableFiltersKey]);
 
   // Scroll selected row into view when it changes
   useEffect(() => {
@@ -672,6 +602,12 @@ export default function ActionPlanTable({
       }
     }
   }, [selectedId]);
+
+  useEffect(() => {
+    if (selectedId && !actionPlans.some((ap) => ap.id === selectedId)) {
+      setSelectedId(null);
+    }
+  }, [actionPlans, selectedId]);
 
   const visibleActionPlans = useMemo(() => {
     const selected = selectedId ? actionPlans.find((ap) => ap.id === selectedId) : null;
@@ -692,93 +628,8 @@ export default function ActionPlanTable({
     return [...groups.entries()];
   }, [visibleActionPlans]);
 
-  const auditLookup = useMemo(
-    () => new Map(facets.audit.map((audit) => [audit.id, audit.name])),
-    [facets.audit],
-  );
-  const ownerLookup = useMemo(
-    () => new Map(facets.owner.map((owner) => [owner.id, owner.name])),
-    [facets.owner],
-  );
-
-  const activeFilterChips = [
-    {
-      key: "created_via" as const,
-      label: "Action Plan",
-      value: formatSelectedValues(splitFilterValues(filters.created_via), new Map(), (value) =>
-        value in CREATED_VIA_LABELS ? CREATED_VIA_LABELS[value as CreatedVia] : value,
-      ),
-    },
-    {
-      key: "audit" as const,
-      label: "Audit",
-      value: formatSelectedValues(splitFilterValues(filters.audit), auditLookup),
-    },
-    {
-      key: "owner" as const,
-      label: "Owner",
-      value: formatSelectedValues(splitFilterValues(filters.owner), ownerLookup),
-    },
-    {
-      key: "status" as const,
-      label: "Status",
-      value: formatSelectedValues(splitFilterValues(filters.status), new Map(), (value) =>
-        value in STATUS_LABELS ? STATUS_LABELS[value as Status] : value,
-      ),
-    },
-    {
-      key: "priority" as const,
-      label: "Priority",
-      value: formatSelectedValues(splitFilterValues(filters.priority), new Map()),
-    },
-    {
-      key: "due_bucket" as const,
-      label: "Due",
-      value: formatSelectedValues(
-        splitFilterValues(filters.due_bucket),
-        new Map(DUE_BUCKET_OPTIONS.map((bucket) => [bucket.key, bucket.label])),
-      ),
-    },
-    {
-      key: "entity" as const,
-      label: "Entity",
-      value: filters.entity,
-    },
-    {
-      key: "audit_type" as const,
-      label: "Audit type",
-      value: formatSelectedValues(splitFilterValues(filters.audit_type), new Map(), (value) =>
-        value in AUDIT_TYPE_LABELS ? AUDIT_TYPE_LABELS[value as AuditType] : value,
-      ),
-    },
-    {
-      key: "department" as const,
-      label: "Department",
-      value: filters.department,
-    },
-  ].filter((chip) => chip.value);
-
   function setFilter<K extends keyof Filters>(key: K, value: Filters[K]) {
     onFilterChange(key, value);
-  }
-
-  function clearFilter(key: keyof Filters) {
-    setFilter(key, "" as Filters[typeof key]);
-  }
-
-  function clearAllColumnFilters() {
-    onFiltersChange((current) => ({
-      ...current,
-      status: "",
-      priority: "",
-      audit: "",
-      owner: "",
-      due_bucket: "",
-      created_via: "",
-      entity: "",
-      audit_type: "",
-      department: "",
-    }));
   }
 
   function patchActionPlanLocal(actionPlanId: string, patch: Partial<DashboardActionPlan>) {
@@ -909,31 +760,16 @@ export default function ActionPlanTable({
         </button>
       </section>
 
-      {activeFilterChips.length > 0 ? (
-        <section className="dashboard-active-filters">
-          <div className="dashboard-active-filters__chips">
-            <span>Filters:</span>
-            {activeFilterChips.map((chip) => (
-              <button
-                aria-label={`${chip.label}: ${chip.value}`}
-                className="dashboard-filter-chip"
-                key={chip.key}
-                onClick={() => clearFilter(chip.key)}
-                type="button"
-              >
-                <strong>{chip.label}:</strong> {chip.value}
-                <em aria-hidden="true">×</em>
-              </button>
-            ))}
-            <button className="dashboard-filter-clear" onClick={clearAllColumnFilters} type="button">
-              Clear all
-            </button>
-          </div>
-          <p>
-            <strong>{filteredCount}</strong>
-            <span> of {totalUnfiltered} action plans</span>
-          </p>
-        </section>
+      {belowSearchSlot}
+
+      {!loading && (hasStackableFilters || filters.q.trim() || filters.overdue || filters.assigned_to_me) ? (
+        <p className="dashboard-active-filters" style={{ marginTop: 6, marginBottom: 0 }}>
+          <strong>{filteredCount}</strong>
+          <span> of {serverMatchedCount || actionPlans.length} action plans in this view</span>
+          {totalUnfiltered !== (serverMatchedCount || actionPlans.length) ? (
+            <span style={{ color: "var(--text3)" }}> ({totalUnfiltered} total in portfolio)</span>
+          ) : null}
+        </p>
       ) : null}
 
       <section className="dashboard-table-card">
@@ -951,10 +787,19 @@ export default function ActionPlanTable({
           </div>
         ) : null}
         {!loading && visibleActionPlans.length === 0 ? (
-          <EmptyState
-            subtitle="Try clearing filters or creating a new audit report."
-            title="No action plans match the current filters"
-          />
+          hasStackableFilters && serverMatchedCount > 0 ? (
+            <EmptyState
+              actionLabel="Clear filters"
+              onAction={() => onClearStackableFilters?.()}
+              subtitle="Adjust or clear stackable filters to see more action plans."
+              title="No action plans match your filters"
+            />
+          ) : (
+            <EmptyState
+              subtitle="Try clearing filters or creating a new audit report."
+              title="No action plans match the current filters"
+            />
+          )
         ) : null}
 
         {!loading && groupByAudit ? (
@@ -963,24 +808,9 @@ export default function ActionPlanTable({
               <AuditGroup
                 actionPlans={plans}
                 auditName={auditName}
-                auditLogs={auditLogs}
-                auditLogOpenIds={auditLogOpenIds}
                 selectedId={selectedId}
                 key={auditName}
-                loadAuditLog={loadAuditLog}
-                forceReloadAuditLog={forceReloadAuditLog}
-                mutateActionPlan={mutateActionPlan}
-                patchActionPlanLocal={patchActionPlanLocal}
-                refreshActionPlans={onRefresh}
-                revisionHistoryOpen={revisionHistoryOpen}
-                setRevisionHistoryOpen={setRevisionHistoryOpen}
                 setSelectedId={setSelectedId}
-                user={user}
-                userOptions={userOptions}
-                addCommentLocal={addCommentLocal}
-                filters={filters}
-                facets={facets}
-                setFilter={setFilter}
                 cycleSort={onSortChange}
                 sortBy={sortBy}
                 sortDir={sortDir}
@@ -993,27 +823,12 @@ export default function ActionPlanTable({
         {!loading && !groupByAudit ? (
           <ActionPlanRows
             actionPlans={visibleActionPlans}
-            auditLogs={auditLogs}
-            auditLogOpenIds={auditLogOpenIds}
-            selectedId={selectedId}
-            loadAuditLog={loadAuditLog}
-            forceReloadAuditLog={forceReloadAuditLog}
-            mutateActionPlan={mutateActionPlan}
-            patchActionPlanLocal={patchActionPlanLocal}
-            refreshActionPlans={onRefresh}
-            revisionHistoryOpen={revisionHistoryOpen}
-            setRevisionHistoryOpen={setRevisionHistoryOpen}
-            setSelectedId={setSelectedId}
-            user={user}
-            userOptions={userOptions}
-            addCommentLocal={addCommentLocal}
-            filters={filters}
-            facets={facets}
-            setFilter={setFilter}
             cycleSort={onSortChange}
+            rowRefs={rowRefs}
+            selectedId={selectedId}
+            setSelectedId={setSelectedId}
             sortBy={sortBy}
             sortDir={sortDir}
-            rowRefs={rowRefs}
           />
         ) : null}
       </section>
@@ -1083,21 +898,6 @@ function ActionPlanRows({
   actionPlans,
   selectedId,
   setSelectedId,
-  user,
-  mutateActionPlan,
-  patchActionPlanLocal,
-  refreshActionPlans,
-  loadAuditLog,
-  forceReloadAuditLog,
-  auditLogOpenIds,
-  auditLogs,
-  revisionHistoryOpen,
-  setRevisionHistoryOpen,
-  userOptions,
-  addCommentLocal,
-  filters,
-  facets,
-  setFilter,
   cycleSort,
   sortBy,
   sortDir,
@@ -1106,52 +906,11 @@ function ActionPlanRows({
   actionPlans: DashboardActionPlan[];
   selectedId: string | null;
   setSelectedId: (id: string | null) => void;
-  user: DashboardUser | null;
-  mutateActionPlan: (
-    actionPlan: DashboardActionPlan,
-    path: string,
-    payload: Record<string, unknown>,
-    localPatch: Partial<DashboardActionPlan>,
-  ) => Promise<void>;
-  patchActionPlanLocal: (actionPlanId: string, patch: Partial<DashboardActionPlan>) => void;
-  refreshActionPlans: () => Promise<void>;
-  loadAuditLog: (actionPlan: DashboardActionPlan) => Promise<void>;
-  forceReloadAuditLog: (actionPlan: DashboardActionPlan) => Promise<void>;
-  auditLogOpenIds: Set<string>;
-  auditLogs: Record<string, AuditLogEntry[]>;
-  revisionHistoryOpen: Record<string, boolean>;
-  setRevisionHistoryOpen: (
-    value: Record<string, boolean> | ((current: Record<string, boolean>) => Record<string, boolean>),
-  ) => void;
-  userOptions: UserOption[];
-  addCommentLocal: (actionPlanId: string, createdComment: DashboardComment) => void;
-  filters: Filters;
-  facets: DashboardFacets;
-  setFilter: <K extends keyof Filters>(key: K, value: Filters[K]) => void;
   cycleSort: (sortBy: SortBy) => void;
   sortBy: SortBy | null;
   sortDir: "asc" | "desc" | null;
-  rowRefs: React.MutableRefObject<Map<string, HTMLElement>>;
+  rowRefs: MutableRefObject<Map<string, HTMLElement>>;
 }) {
-  const toast = useToast();
-  const [openFilter, setOpenFilter] = useState<FilterColumn | null>(null);
-  const [draftValues, setDraftValues] = useState<string[]>([]);
-  const [auditSearch, setAuditSearch] = useState("");
-  const [ownerSearch, setOwnerSearch] = useState("");
-  const createdViaHeaderRef = useRef<HTMLButtonElement | null>(null);
-  const auditHeaderRef = useRef<HTMLButtonElement | null>(null);
-  const ownerHeaderRef = useRef<HTMLButtonElement | null>(null);
-  const statusHeaderRef = useRef<HTMLButtonElement | null>(null);
-  const priorityHeaderRef = useRef<HTMLButtonElement | null>(null);
-  const dueHeaderRef = useRef<HTMLButtonElement | null>(null);
-  const headerRefs: Record<FilterColumn, typeof createdViaHeaderRef> = {
-    created_via: createdViaHeaderRef,
-    audit: auditHeaderRef,
-    owner: ownerHeaderRef,
-    status: statusHeaderRef,
-    priority: priorityHeaderRef,
-    due_bucket: dueHeaderRef,
-  };
   const filterLabels: Record<SortableColumn, string> = {
     created_via: "Action Plan",
     audit: "Audit",
@@ -1161,63 +920,16 @@ function ActionPlanRows({
     due_bucket: "Due",
     evidence: "Evidence",
   };
-  const selectedCounts: Record<FilterColumn, number> = {
-    created_via: splitFilterValues(filters.created_via).length,
-    audit: splitFilterValues(filters.audit).length,
-    owner: splitFilterValues(filters.owner).length,
-    status: splitFilterValues(filters.status).length,
-    priority: splitFilterValues(filters.priority).length,
-    due_bucket: splitFilterValues(filters.due_bucket).length,
-  };
-  const filteredAudits = facets.audit.filter((audit) =>
-    audit.name.toLowerCase().includes(auditSearch.trim().toLowerCase()),
-  );
-  const filteredOwners = facets.owner.filter((owner) =>
-    owner.name.toLowerCase().includes(ownerSearch.trim().toLowerCase()),
-  );
-
-  function openColumnFilter(column: FilterColumn) {
-    setDraftValues(splitFilterValues(filters[column]));
-    setOpenFilter(column);
-    if (column === "audit") {
-      setAuditSearch("");
-    }
-    if (column === "owner") {
-      setOwnerSearch("");
-    }
-  }
-
-  function applyOpenFilter() {
-    if (!openFilter) {
-      return;
-    }
-
-    setFilter(openFilter, joinFilterValues(draftValues));
-    setOpenFilter(null);
-  }
-
-  function clearOpenFilter() {
-    if (!openFilter) {
-      return;
-    }
-
-    setFilter(openFilter, "");
-    setOpenFilter(null);
-  }
 
   function renderHeaderButton(column: SortableColumn) {
     const columnSortBy = SORT_BY_COLUMN[column];
     const isSorted = sortBy === columnSortBy;
-    const isFilterable = column !== "evidence";
-    const filterCount = isFilterable ? selectedCounts[column] : 0;
-    const hasActiveFilter = filterCount > 0;
     const chevron = isSorted ? (sortDir === "asc" ? "↑" : "↓") : "↓";
-    const className = [
-      "dashboard-column-filter",
-      hasActiveFilter ? "dashboard-column-filter--active" : "",
-      isSorted ? "dashboard-column-filter--sorted" : "",
-    ].filter(Boolean).join(" ");
-    const tooltipText = column === "evidence" ? "Number of evidence files uploaded for this action plan" : undefined;
+    const className = ["dashboard-column-filter", isSorted ? "dashboard-column-filter--sorted" : ""]
+      .filter(Boolean)
+      .join(" ");
+    const tooltipText =
+      column === "evidence" ? "Number of evidence files uploaded for this action plan" : undefined;
 
     return (
       <span className={className}>
@@ -1226,175 +938,25 @@ function ActionPlanRows({
           onClick={() => cycleSort(columnSortBy)}
           title={tooltipText}
           type="button"
+          style={{ alignItems: "center", display: "flex", justifyContent: "space-between", width: "100%" }}
         >
           <span>{filterLabels[column]}</span>
-          {!isFilterable ? (
-            <em
-              aria-hidden="true"
-              className={isSorted ? "dashboard-column-filter__icon dashboard-column-filter__icon--sorted" : "dashboard-column-filter__icon"}
-            >
-              {chevron}
-            </em>
-          ) : null}
-        </button>
-        {isFilterable ? (
-          <button
-            aria-label={`Filter ${filterLabels[column]}`}
-            className="dashboard-column-filter__trigger"
-            onClick={() => openColumnFilter(column)}
-            ref={headerRefs[column]}
-            type="button"
+          <em
+            aria-hidden="true"
+            className={
+              isSorted ? "dashboard-column-filter__icon dashboard-column-filter__icon--sorted" : "dashboard-column-filter__icon"
+            }
           >
-            <em
-              aria-hidden="true"
-              className={isSorted ? "dashboard-column-filter__icon dashboard-column-filter__icon--sorted" : "dashboard-column-filter__icon"}
-            >
-              {chevron}
-            </em>
-          </button>
-        ) : null}
-        {hasActiveFilter ? <strong>{filterCount}</strong> : null}
+            {chevron}
+          </em>
+        </button>
       </span>
-    );
-  }
-
-  function renderOption({
-    value,
-    label,
-    count,
-    badgeClassName,
-    avatar,
-  }: {
-    value: string;
-    label: string;
-    count: number;
-    badgeClassName?: string;
-    avatar?: string;
-  }) {
-    const checked = draftValues.includes(value);
-
-    return (
-      <label className="column-filter-option" key={value}>
-        <input
-          checked={checked}
-          onChange={(event) =>
-            setDraftValues((current) => toggleDraftValue(current, value, event.target.checked))
-          }
-          type="checkbox"
-        />
-        {avatar ? (
-          <span className={`column-filter-avatar column-filter-avatar--${getAvatarTone(label)}`}>
-            {avatar}
-          </span>
-        ) : null}
-        <span className={badgeClassName ?? "column-filter-option__label"}>{label}</span>
-        <em>{count}</em>
-      </label>
-    );
-  }
-
-  function renderPopoverContents() {
-    if (!openFilter) {
-      return null;
-    }
-
-    return (
-      <>
-        <div className="column-filter-popover__body">
-          {openFilter === "status"
-            ? STATUS_ORDER.map((status) =>
-                renderOption({
-                  value: status,
-                  label: STATUS_LABELS[status],
-                  count: facets.status[status] ?? 0,
-                  badgeClassName: `column-filter-chip ${STATUS_COLORS[status].bg} ${STATUS_COLORS[status].text}`,
-                }),
-              )
-            : null}
-          {openFilter === "priority"
-            ? PRIORITY_ORDER.map((priority) =>
-                renderOption({
-                  value: priority,
-                  label: priority,
-                  count: facets.priority[priority] ?? 0,
-                  badgeClassName: `column-filter-chip ${PRIORITY_COLORS[priority].bg} ${PRIORITY_COLORS[priority].text}`,
-                }),
-              )
-            : null}
-          {openFilter === "audit" ? (
-            <>
-              <input
-                aria-label="Search audits"
-                className="column-filter-search"
-                onChange={(event) => setAuditSearch(event.target.value)}
-                placeholder="Search audits..."
-                value={auditSearch}
-              />
-              {filteredAudits.map((audit) =>
-                renderOption({
-                  value: audit.id,
-                  label: audit.name,
-                  count: audit.count,
-                }),
-              )}
-            </>
-          ) : null}
-          {openFilter === "owner" ? (
-            <>
-              <input
-                aria-label="Search owners"
-                className="column-filter-search"
-                onChange={(event) => setOwnerSearch(event.target.value)}
-                placeholder="Search owners..."
-                value={ownerSearch}
-              />
-              {filteredOwners.map((owner) =>
-                renderOption({
-                  value: owner.id,
-                  label: owner.name,
-                  count: owner.count,
-                  avatar: getAvatarInitials(owner.name),
-                }),
-              )}
-            </>
-          ) : null}
-          {openFilter === "due_bucket"
-            ? DUE_BUCKET_OPTIONS.map((bucket) =>
-                renderOption({
-                  value: bucket.key,
-                  label: bucket.label,
-                  count: facets.due_bucket[bucket.key] ?? 0,
-                }),
-              )
-            : null}
-          {openFilter === "created_via"
-            ? CREATED_VIA_ORDER.map((createdVia) =>
-                renderOption({
-                  value: createdVia,
-                  label: CREATED_VIA_LABELS[createdVia],
-                  count: facets.created_via[createdVia] ?? 0,
-                }),
-              )
-            : null}
-        </div>
-        <div className="column-filter-popover__footer">
-          <button className="column-filter-clear" onClick={clearOpenFilter} type="button">
-            Clear
-          </button>
-          <button className="button button--primary" onClick={applyOpenFilter} type="button">
-            Apply
-          </button>
-        </div>
-      </>
     );
   }
 
   return (
     <div className="dashboard-table">
-      <div
-        className="dashboard-table__head"
-        style={{ gridTemplateColumns: DASHBOARD_TABLE_COLUMNS }}
-      >
+      <div className="dashboard-table__head" style={{ gridTemplateColumns: DASHBOARD_TABLE_COLUMNS }}>
         {renderHeaderButton("created_via")}
         {renderHeaderButton("audit")}
         {renderHeaderButton("owner")}
@@ -1403,13 +965,6 @@ function ActionPlanRows({
         {renderHeaderButton("due_bucket")}
         {renderHeaderButton("evidence")}
       </div>
-      <ColumnFilterPopover
-        anchorRef={openFilter ? headerRefs[openFilter] : createdViaHeaderRef}
-        isOpen={openFilter !== null}
-        onClose={() => setOpenFilter(null)}
-      >
-        {renderPopoverContents()}
-      </ColumnFilterPopover>
       {actionPlans.map((actionPlan) => {
         const isSelected = selectedId === actionPlan.id;
         return (

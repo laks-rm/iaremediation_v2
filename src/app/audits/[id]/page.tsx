@@ -83,7 +83,7 @@ type FindingDetail = {
   }[];
 };
 
-type EditableAuditField = "name" | "reference_number" | "opinion_rating" | "executive_summary";
+type EditableAuditField = "name" | "reference_number" | "opinion_rating" | "executive_summary" | "audit_type";
 
 const CLOSED_STATUSES: Status[] = ["Closed", "Dropped", "RiskAccepted"];
 const CONTROL_RATINGS: ControlRating[] = [
@@ -92,6 +92,7 @@ const CONTROL_RATINGS: ControlRating[] = [
   "NotEffective",
 ];
 const PRIORITIES: Priority[] = ["High", "Moderate", "Low"];
+const AUDIT_TYPES: AuditType[] = ["IT", "RegulatoryIT", "Operations", "RegulatoryOperations", "External"];
 
 async function readResponseBody(response: Response) {
   const text = await response.text();
@@ -153,6 +154,7 @@ export default function AuditDetailPage() {
   const [addingEntity, setAddingEntity] = useState(false);
   const [removingEntityId, setRemovingEntityId] = useState("");
   const [allEntities, setAllEntities] = useState<{ id: string; code: string; full_name: string; is_active: boolean }[]>([]);
+  const [editingAuditType, setEditingAuditType] = useState(false);
 
   const loadAudit = useCallback(async () => {
     setIsLoading(true);
@@ -260,6 +262,23 @@ export default function AuditDetailPage() {
     }
     setAudit((body as { audit: AuditDetail }).audit);
     setEditingField(null);
+  }
+
+  async function saveAuditType(newAuditType: AuditType) {
+    const response = await fetch(`/api/v1/audits/${auditId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ audit_type: newAuditType }),
+    });
+    const body = await readResponseBody(response);
+    if (!response.ok) {
+      toast.error(responseError(body, "Unable to update audit type."));
+      setEditingAuditType(false);
+      return;
+    }
+    setAudit((body as { audit: AuditDetail }).audit);
+    setEditingAuditType(false);
+    toast.success("Audit type updated successfully");
   }
 
   function startFindingEdit(finding: FindingDetail) {
@@ -522,7 +541,63 @@ export default function AuditDetailPage() {
                 onValueChange={setDraftValue}
                 draftValue={draftValue}
               />
-              <span className={badgeClass("type", audit.audit_type)}>{AUDIT_TYPE_LABELS[audit.audit_type]}</span>
+              <span className={badgeClass("type", audit.audit_type)}>
+                {AUDIT_TYPE_LABELS[audit.audit_type]}
+                {canEdit ? (
+                  <button
+                    className="audit-icon-button"
+                    onClick={() => setEditingAuditType(!editingAuditType)}
+                    style={{ marginLeft: "4px", cursor: "pointer" }}
+                    type="button"
+                  >
+                    ✎
+                  </button>
+                ) : null}
+              </span>
+              {editingAuditType && canEdit ? (
+                <div style={{ position: "relative", display: "inline-block" }}>
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "4px",
+                      left: "0",
+                      background: "var(--surface)",
+                      border: "1px solid var(--border2)",
+                      borderRadius: "8px",
+                      padding: "8px",
+                      boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                      zIndex: 1000,
+                      minWidth: "200px",
+                    }}
+                  >
+                    {AUDIT_TYPES.map((type) => (
+                      <button
+                        className="button"
+                        key={type}
+                        onClick={() => saveAuditType(type)}
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          textAlign: "left",
+                          marginBottom: "4px",
+                          background: type === audit.audit_type ? "var(--surface2)" : "transparent",
+                        }}
+                        type="button"
+                      >
+                        {AUDIT_TYPE_LABELS[type]}
+                      </button>
+                    ))}
+                    <button
+                      className="button"
+                      onClick={() => setEditingAuditType(false)}
+                      style={{ width: "100%", marginTop: "4px" }}
+                      type="button"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <EditableSelect
                 canEdit={canEdit}
                 editing={editingField === "opinion_rating"}

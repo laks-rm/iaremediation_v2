@@ -1,4 +1,4 @@
-import { AuditOpinionRating, Prisma } from "@prisma/client";
+import { AuditOpinionRating, AuditType, Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -10,6 +10,7 @@ import { fileExists } from "../../../../../lib/storage";
 const updateAuditSchema = z.object({
   name: z.string().trim().min(1).max(255).optional(),
   reference_number: z.string().trim().max(100).nullable().optional(),
+  audit_type: z.enum(["IT", "RegulatoryIT", "Operations", "RegulatoryOperations", "External"]).optional(),
   opinion_rating: z
     .enum(["Satisfactory", "NeedsImprovement", "Unsatisfactory"])
     .nullable()
@@ -203,6 +204,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
     if (parsed.data.reference_number !== undefined) {
       data.reference_number = nullableString(parsed.data.reference_number);
+    }
+    if (parsed.data.audit_type !== undefined) {
+      data.audit_type = parsed.data.audit_type as AuditType;
     }
     if (parsed.data.opinion_rating !== undefined) {
       data.opinion_rating = parsed.data.opinion_rating as AuditOpinionRating | null;

@@ -2,9 +2,12 @@
 
 import { getSession } from "next-auth/react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 
 import AppLayout from "../../components/AppLayout";
+import ActionPlanFilters, {
+  type ActionPlanFiltersOptionMaps,
+} from "../../components/action-plans/ActionPlanFilters";
 import ActionPlanTable, {
   type ActionPlanTableData,
   type DashboardActionPlan,
@@ -15,6 +18,14 @@ import ActionPlanTable, {
   type UserOption,
 } from "../../components/action-plans/ActionPlanTable";
 import { useToast } from "../../components/Toast";
+import {
+  applyFilters,
+  migrateLegacySearchParams,
+  parseFiltersParam,
+  serializeFilters,
+  stackableFiltersToLegacyQuery,
+  type ActionPlanFilterChip,
+} from "../../lib/action-plan-filters";
 
 const emptyData: ActionPlanTableData = {
   action_plans: [],
@@ -73,15 +84,15 @@ function readActionPlanFilters(searchParams: URLSearchParams): Filters {
   return {
     ids: searchParams.has("ids") ? searchParams.get("ids") ?? "" : null,
     q: searchParams.get("q") ?? "",
-    status: searchParams.get("status") ?? "",
-    priority: searchParams.get("priority") ?? "",
-    audit: searchParams.get("audit") ?? "",
-    owner: searchParams.get("owner") ?? "",
-    due_bucket: searchParams.get("due_bucket") ?? "",
-    created_via: searchParams.get("created_via") ?? "",
-    entity: searchParams.get("entity") ?? "",
-    audit_type: searchParams.get("audit_type") ?? "",
-    department: searchParams.get("department") ?? "",
+    status: "",
+    priority: "",
+    audit: "",
+    owner: "",
+    due_bucket: "",
+    created_via: "",
+    entity: "",
+    audit_type: "",
+    department: "",
     overdue: searchParams.get("overdue") === "1",
     assigned_to_me: searchParams.get("assigned_to_me") === "1",
     sort_by: searchParams.get("sort_by") ?? "",
@@ -93,16 +104,8 @@ function filtersEqual(left: Filters, right: Filters) {
   return (
     left.ids === right.ids &&
     left.q === right.q &&
-    left.status === right.status &&
-    left.priority === right.priority &&
-    left.audit === right.audit &&
-    left.owner === right.owner &&
-    left.due_bucket === right.due_bucket &&
-    left.created_via === right.created_via &&
-    left.entity === right.entity &&
-    left.audit_type === right.audit_type &&
-    left.department === right.department &&
     left.overdue === right.overdue &&
+    left.assigned_to_me === right.assigned_to_me &&
     left.sort_by === right.sort_by &&
     left.sort_dir === right.sort_dir
   );
@@ -114,22 +117,23 @@ function setStringParam(params: URLSearchParams, key: string, value: string | nu
   }
 }
 
-function buildUrlQuery(filters: Filters, groupByAudit: boolean) {
+function buildUrlQuery(
+  filters: Filters,
+  groupByAudit: boolean,
+  stackableFilters: ActionPlanFilterChip[],
+  currentSearch: URLSearchParams,
+) {
   const params = new URLSearchParams();
 
   setStringParam(params, "q", filters.q);
-  setStringParam(params, "status", filters.status);
-  setStringParam(params, "priority", filters.priority);
-  setStringParam(params, "audit", filters.audit);
-  setStringParam(params, "owner", filters.owner);
-  setStringParam(params, "due_bucket", filters.due_bucket);
-  setStringParam(params, "created_via", filters.created_via);
-  setStringParam(params, "entity", filters.entity);
-  setStringParam(params, "audit_type", filters.audit_type);
-  setStringParam(params, "department", filters.department);
   setStringParam(params, "sort_by", filters.sort_by);
   setStringParam(params, "sort_dir", filters.sort_dir);
   setStringParam(params, "ids", filters.ids);
+
+  const filtersSerialized = serializeFilters(stackableFilters);
+  if (filtersSerialized) {
+    params.set("filters", filtersSerialized);
+  }
 
   if (filters.overdue) {
     params.set("overdue", "1");
@@ -143,6 +147,11 @@ function buildUrlQuery(filters: Filters, groupByAudit: boolean) {
     params.set("group", "audit");
   }
 
+  const expand = currentSearch.get("expand");
+  if (expand) {
+    params.set("expand", expand);
+  }
+
   return params.toString();
 }
 
@@ -150,15 +159,6 @@ function buildDashboardApiQuery(filters: Filters) {
   const params = new URLSearchParams();
 
   setStringParam(params, "q", filters.q);
-  setStringParam(params, "status", filters.status);
-  setStringParam(params, "priority", filters.priority);
-  setStringParam(params, "audit", filters.audit);
-  setStringParam(params, "owner", filters.owner);
-  setStringParam(params, "entity", filters.entity);
-  setStringParam(params, "due_bucket", filters.due_bucket);
-  setStringParam(params, "created_via", filters.created_via);
-  setStringParam(params, "audit_type", filters.audit_type);
-  setStringParam(params, "department", filters.department);
   setStringParam(params, "sort_by", filters.sort_by);
   setStringParam(params, "sort_dir", filters.sort_dir);
   setStringParam(params, "ids", filters.ids);
@@ -174,20 +174,21 @@ function buildDashboardApiQuery(filters: Filters) {
   return params.toString();
 }
 
-function buildActionPlanExportQuery(filters: Filters) {
+function buildActionPlanExportQuery(filters: Filters, stackableFilters: ActionPlanFilterChip[]) {
   const params = new URLSearchParams();
+  const legacy = stackableFiltersToLegacyQuery(stackableFilters);
 
   setStringParam(params, "q", filters.q);
-  setStringParam(params, "status", filters.status);
-  setStringParam(params, "priority", filters.priority);
-  setStringParam(params, "audit", filters.audit);
-  setStringParam(params, "owner", filters.owner);
+  setStringParam(params, "status", legacy.status);
+  setStringParam(params, "priority", legacy.priority);
+  setStringParam(params, "audit", legacy.audit);
+  setStringParam(params, "owner", legacy.owner);
   setStringParam(params, "due_bucket", filters.due_bucket);
-  setStringParam(params, "created_via", filters.created_via);
+  setStringParam(params, "created_via", legacy.created_via);
   setStringParam(params, "ids", filters.ids);
-  setStringParam(params, "entity", filters.entity);
-  setStringParam(params, "audit_type", filters.audit_type);
-  setStringParam(params, "department", filters.department);
+  setStringParam(params, "entity", legacy.entity);
+  setStringParam(params, "audit_type", legacy.audit_type);
+  setStringParam(params, "department", legacy.department);
   setStringParam(params, "sort_by", filters.sort_by);
   setStringParam(params, "sort_dir", filters.sort_dir);
 
@@ -210,6 +211,15 @@ function ActionPlansPageContent() {
   const [filters, setFilters] = useState<Filters>(() =>
     readActionPlanFilters(new URLSearchParams(searchParams.toString())),
   );
+  const [stackableFilters, setStackableFilters] = useState<ActionPlanFilterChip[]>(() => {
+    const sp = new URLSearchParams(searchParams.toString());
+    const filtersParam = sp.get("filters");
+    if (filtersParam) {
+      return parseFiltersParam(filtersParam);
+    }
+
+    return migrateLegacySearchParams(sp);
+  });
   const [groupByAudit, setGroupByAudit] = useState(searchParams.get("group") === "audit");
   const [isLoading, setIsLoading] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
@@ -247,7 +257,7 @@ function ActionPlansPageContent() {
     } finally {
       setIsLoading(false);
     }
-  }, [filters, toast]);
+  }, [filters.q, filters.ids, filters.overdue, filters.assigned_to_me, filters.sort_by, filters.sort_dir, toast]);
 
   useEffect(() => {
     getSession().then((session) => {
@@ -269,24 +279,32 @@ function ActionPlansPageContent() {
   }, [fetchActionPlans]);
 
   useEffect(() => {
-    const nextFilters = readActionPlanFilters(new URLSearchParams(searchParams.toString()));
+    const sp = new URLSearchParams(searchParams.toString());
+    const nextFilters = readActionPlanFilters(sp);
     setFilters((current) => (filtersEqual(current, nextFilters) ? current : nextFilters));
     setGroupByAudit((current) => {
-      const nextGroupByAudit = searchParams.get("group") === "audit";
+      const nextGroupByAudit = sp.get("group") === "audit";
       return current === nextGroupByAudit ? current : nextGroupByAudit;
     });
+
+    const filtersParam = sp.get("filters");
+    const nextStackable = filtersParam ? parseFiltersParam(filtersParam) : migrateLegacySearchParams(sp);
+    setStackableFilters((current) =>
+      serializeFilters(current) === serializeFilters(nextStackable) ? current : nextStackable,
+    );
   }, [searchParams]);
 
   useEffect(() => {
-    const nextQuery = buildUrlQuery(filters, groupByAudit);
-    const currentQuery = searchParams.toString();
+    const sp = new URLSearchParams(searchParams.toString());
+    const nextQuery = buildUrlQuery(filters, groupByAudit, stackableFilters, sp);
+    const currentQuery = sp.toString();
 
     if (nextQuery === currentQuery) {
       return;
     }
 
     router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
-  }, [filters, groupByAudit, pathname, router]);
+  }, [filters, groupByAudit, stackableFilters, pathname, router, searchParams]);
 
   useEffect(() => {
     if (user?.role !== "AuditTeam") {
@@ -308,6 +326,90 @@ function ActionPlansPageContent() {
       .then(setUserOptions)
       .catch(() => setUserOptions([]));
   }, [user?.role]);
+
+  const clientFilteredPlans = useMemo(
+    () => applyFilters(data.action_plans, stackableFilters),
+    [data.action_plans, stackableFilters],
+  );
+
+  const stackableFiltersKey = useMemo(() => serializeFilters(stackableFilters), [stackableFilters]);
+
+  const filterPickerOptions: ActionPlanFiltersOptionMaps = useMemo(() => {
+    const plans = data.action_plans;
+    const userById = new Map<string, { id: string; name: string; email?: string | null }>();
+    const auditById = new Map<string, string>();
+    const entityByCode = new Map<string, { code: string; label: string }>();
+    const departments = new Set<string>();
+
+    for (const plan of plans) {
+      if (plan.department?.trim()) {
+        departments.add(plan.department.trim());
+      }
+
+      const audit = plan.finding?.audit;
+      if (audit?.id) {
+        auditById.set(audit.id, audit.name);
+      }
+
+      for (const row of plan.action_plan_owners) {
+        userById.set(row.user.id, {
+          id: row.user.id,
+          name: row.user.name,
+          email: row.user.email ?? null,
+        });
+      }
+
+      for (const row of plan.action_plan_follow_up_auditors) {
+        userById.set(row.user.id, {
+          id: row.user.id,
+          name: row.user.name,
+          email: row.user.email ?? null,
+        });
+      }
+
+      for (const row of plan.action_plan_line_managers) {
+        userById.set(row.user.id, {
+          id: row.user.id,
+          name: row.user.name,
+          email: row.user.email ?? null,
+        });
+      }
+
+      for (const row of plan.action_plan_entities) {
+        const code = row.entity.code;
+        entityByCode.set(code, { code, label: row.entity.full_name || code });
+      }
+    }
+
+    for (const option of userOptions) {
+      if (!userById.has(option.id)) {
+        userById.set(option.id, {
+          id: option.id,
+          name: option.name,
+          email: option.email ?? null,
+        });
+      }
+    }
+
+    for (const audit of data.facets.audit) {
+      if (!auditById.has(audit.id)) {
+        auditById.set(audit.id, audit.name);
+      }
+    }
+
+    const audits = [...auditById.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    const entityOptions = [...entityByCode.values()].sort((a, b) => a.code.localeCompare(b.code));
+
+    return {
+      audits,
+      users: [...userById.values()].sort((a, b) => a.name.localeCompare(b.name)),
+      entityOptions,
+      departmentOptions: [...departments].sort((a, b) => a.localeCompare(b)),
+    };
+  }, [data.action_plans, data.facets.audit, userOptions]);
 
   function patchActionPlanLocal(actionPlanId: string, patch: Partial<DashboardActionPlan>) {
     setData((current) => ({
@@ -349,7 +451,7 @@ function ActionPlansPageContent() {
 
   function handleExport() {
     try {
-      const query = buildActionPlanExportQuery(filters);
+      const query = buildActionPlanExportQuery(filters, stackableFilters);
 
       setIsExporting(true);
       window.setTimeout(() => setIsExporting(false), 300);
@@ -378,27 +480,37 @@ function ActionPlansPageContent() {
         </header>
 
         <ActionPlanTable
-          actionPlans={data.action_plans}
+          actionPlans={clientFilteredPlans}
+          belowSearchSlot={
+            <ActionPlanFilters
+              chips={stackableFilters}
+              onChange={setStackableFilters}
+              options={filterPickerOptions}
+            />
+          }
           facets={data.facets}
-          filteredCount={data.filtered_count}
+          filteredCount={clientFilteredPlans.length}
           filters={filters}
           groupByAudit={groupByAudit}
+          hasStackableFilters={stackableFilters.length > 0}
           isExporting={isExporting}
           loading={isLoading}
           onAddComment={addCommentLocal}
+          onClearStackableFilters={() => setStackableFilters([])}
           onError={toast.error}
           onExport={handleExport}
           onFilterChange={setFilter}
-          onFiltersChange={setFilters}
           onGroupByAuditChange={setGroupByAudit}
           onPatchActionPlan={patchActionPlanLocal}
           onRefresh={fetchActionPlans}
           onSortChange={cycleSort}
+          serverMatchedCount={data.action_plans.length}
           showGroupingToggle
           showOverdueToggle
           sortBy={(filters.sort_by as SortBy) || null}
           sortDir={filters.sort_dir === "asc" || filters.sort_dir === "desc" ? filters.sort_dir : null}
-          total={data.total}
+          stackableFiltersKey={stackableFiltersKey}
+          total={clientFilteredPlans.length}
           totalUnfiltered={data.total_unfiltered}
           user={user}
           userOptions={userOptions}

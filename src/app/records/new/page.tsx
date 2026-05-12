@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import AppLayout from "../../../components/AppLayout";
 import EntityMultiSelect from "../../../components/EntityMultiSelect";
 import { AUDIT_TYPE_LABELS, STATUS_LABELS } from "../../../lib/constants";
+import { inferAuditTypeFromReference } from "../../../lib/audit-type-mapping";
 
 type Mode = "newAudit" | "existingAudit" | "standalone";
 type EntryMethod = "manual" | "ai";
@@ -333,6 +334,7 @@ function NewRecordPageContent() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [aiLoadingId, setAiLoadingId] = useState("");
   const [aiErrors, setAiErrors] = useState<Record<string, string>>({});
+  const [auditTypeManuallySet, setAuditTypeManuallySet] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -484,6 +486,7 @@ function NewRecordPageContent() {
     setStandaloneFinding(newFindingDraft());
     setSubmitProgress([]);
     setError("");
+    setAuditTypeManuallySet(false);
   }
 
   function selectMode(nextMode: Mode) {
@@ -491,6 +494,7 @@ function NewRecordPageContent() {
     setEntryMethod(null);
     setStep(nextMode === "newAudit" ? 0 : 1);
     setError("");
+    setAuditTypeManuallySet(false);
   }
 
   function selectEntryMethod(method: EntryMethod) {
@@ -1102,6 +1106,26 @@ function NewRecordPageContent() {
     );
   }
 
+  function handleReferenceNumberChange(referenceNumber: string) {
+    setAudit({ ...audit, reference_number: referenceNumber });
+  }
+
+  function handleReferenceNumberBlur() {
+    if (auditTypeManuallySet) {
+      return;
+    }
+
+    const inferredType = inferAuditTypeFromReference(audit.reference_number);
+    if (inferredType) {
+      setAudit({ ...audit, audit_type: inferredType });
+    }
+  }
+
+  function handleAuditTypeChange(auditType: AuditType) {
+    setAudit({ ...audit, audit_type: auditType });
+    setAuditTypeManuallySet(true);
+  }
+
   function renderAuditDetails() {
     return (
       <>
@@ -1117,7 +1141,8 @@ function NewRecordPageContent() {
             <input
               className="records-mono-input"
               value={audit.reference_number}
-              onChange={(event) => setAudit({ ...audit, reference_number: event.target.value })}
+              onBlur={handleReferenceNumberBlur}
+              onChange={(event) => handleReferenceNumberChange(event.target.value)}
             />
           </Field>
           <Field label="Report issue date">
@@ -1133,7 +1158,7 @@ function NewRecordPageContent() {
               labels={AUDIT_TYPE_LABELS}
               options={AUDIT_TYPES}
               value={audit.audit_type}
-              onChange={(audit_type) => setAudit({ ...audit, audit_type })}
+              onChange={handleAuditTypeChange}
             />
           </div>
           <div className="record-field record-field--wide">

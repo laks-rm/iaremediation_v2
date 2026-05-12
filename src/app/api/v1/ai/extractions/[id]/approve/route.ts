@@ -16,6 +16,7 @@ import {
   parseNullableDate,
   toPrismaJson,
 } from "../../../../../../../lib/ai/extraction";
+import { inferAuditTypeFromReference } from "../../../../../../../lib/audit-type-mapping";
 import { writeAuditLog } from "../../../../../../../lib/audit-log/writeAuditLog";
 import { AuthError, requireRole } from "../../../../../../../lib/auth/requireRole";
 import { prisma } from "../../../../../../../lib/db/prisma";
@@ -150,11 +151,16 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const reportIssueDate = parseNullableDate(finalData.report_issue_date);
     const auditReportIssueYear = reportIssueDate ? reportIssueDate.getFullYear() : undefined;
     
+    // Infer audit_type from reference_number if not already set
+    const referenceNumber = nullableString(finalData.reference_number);
+    const inferredAuditType = inferAuditTypeFromReference(referenceNumber);
+    const auditType = (finalData.audit_type as AuditType | null) ?? inferredAuditType ?? "IT";
+    
     const audit = await prisma.audits.create({
       data: {
         name: nullableString(finalData.audit_name ?? finalData.name) ?? extraction.filename,
-        reference_number: nullableString(finalData.reference_number),
-        audit_type: (finalData.audit_type ?? "IT") as AuditType,
+        reference_number: referenceNumber,
+        audit_type: auditType,
         opinion_rating: finalData.opinion_rating as AuditOpinionRating | null | undefined,
         report_issue_date: reportIssueDate,
         executive_summary: nullableString(finalData.executive_summary),

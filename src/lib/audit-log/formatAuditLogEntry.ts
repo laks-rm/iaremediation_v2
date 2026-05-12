@@ -1,4 +1,5 @@
 import { STATUS_LABELS } from "../constants";
+import { formatAuditType } from "../audit-type-mapping";
 
 type Status = keyof typeof STATUS_LABELS;
 
@@ -140,6 +141,8 @@ function formatChangedField(key: string, beforeJson: unknown, afterJson: unknown
         : `Closure date set to ${formatClosureDate(afterValue)}`;
     case "priority":
       return `Priority: ${beforeValue ?? "Not set"} -> ${afterValue ?? "Not set"}`;
+    case "audit_type":
+      return `Audit type changed: ${beforeValue ? formatAuditType(beforeValue as "IT" | "RegulatoryIT" | "Operations" | "RegulatoryOperations" | "External") : "Not set"} → ${afterValue ? formatAuditType(afterValue as "IT" | "RegulatoryIT" | "Operations" | "RegulatoryOperations" | "External") : "Not set"}`;
     default:
       return null;
   }
