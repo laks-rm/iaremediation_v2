@@ -19,6 +19,7 @@ import ActionPlanTable, {
 } from "../../components/action-plans/ActionPlanTable";
 import { useToast } from "../../components/Toast";
 import {
+  applyColumnFilters,
   applyFilters,
   migrateLegacySearchParams,
   parseFiltersParam,
@@ -327,10 +328,10 @@ function ActionPlansPageContent() {
       .catch(() => setUserOptions([]));
   }, [user?.role]);
 
-  const clientFilteredPlans = useMemo(
-    () => applyFilters(data.action_plans, stackableFilters),
-    [data.action_plans, stackableFilters],
-  );
+  const clientFilteredPlans = useMemo(() => {
+    const afterStackable = applyFilters(data.action_plans, stackableFilters);
+    return applyColumnFilters(afterStackable, filters);
+  }, [data.action_plans, stackableFilters, filters]);
 
   const stackableFiltersKey = useMemo(() => serializeFilters(stackableFilters), [stackableFilters]);
 
@@ -500,6 +501,7 @@ function ActionPlansPageContent() {
           onError={toast.error}
           onExport={handleExport}
           onFilterChange={setFilter}
+          onFiltersChange={setFilters}
           onGroupByAuditChange={setGroupByAudit}
           onPatchActionPlan={patchActionPlanLocal}
           onRefresh={fetchActionPlans}

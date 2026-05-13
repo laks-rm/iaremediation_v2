@@ -455,6 +455,126 @@ export function migrateLegacySearchParams(searchParams: URLSearchParams): Action
   return chips;
 }
 
+// ---------------------------------------------------------------------------
+// Column-header filter helpers
+// ---------------------------------------------------------------------------
+
+type DueBucket =
+  | "overdue_gt14"
+  | "overdue_1to14"
+  | "due_today"
+  | "due_this_week"
+  | "due_this_month"
+  | "future"
+  | "no_date";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Classify a plan into one of the seven due-date buckets, matching the
+ * server-side logic in src/lib/dashboard/filters.ts → getDueBucketWhere.
+ */
+export function getDueBucket(plan: DashboardActionPlan): DueBucket {
+  const raw = plan.current_target_date;
+  if (!raw) {
+    return "no_date";
+  }
+
+  const today = new Date();
+  // Normalise to UTC midnight so comparisons are date-only
+  const todayUtc = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  const dueUtc = new Date(`${raw.slice(0, 10)}T00:00:00.000Z`);
+
+  if (Number.isNaN(dueUtc.getTime())) {
+    return "no_date";
+  }
+
+  const fourteenDaysAgo = new Date(todayUtc.getTime() - 14 * DAY_MS);
+  const tomorrow = new Date(todayUtc.getTime() + DAY_MS);
+  const dayOfWeek = todayUtc.getUTCDay();
+  const startOfNextWeek = new Date(todayUtc.getTime() + (7 - dayOfWeek) * DAY_MS);
+  const startOfNextMonth = new Date(Date.UTC(todayUtc.getUTCFullYear(), todayUtc.getUTCMonth() + 1, 1));
+  const endOfThisWeek = new Date(startOfNextWeek.getTime() - 1);
+  const endOfThisMonth = new Date(startOfNextMonth.getTime() - 1);
+
+  if (dueUtc < fourteenDaysAgo) {
+    return "overdue_gt14";
+  }
+
+  if (dueUtc >= fourteenDaysAgo && dueUtc < todayUtc) {
+    return "overdue_1to14";
+  }
+
+  if (dueUtc >= todayUtc && dueUtc < tomorrow) {
+    return "due_today";
+  }
+
+  if (dueUtc >= todayUtc && dueUtc <= endOfThisWeek) {
+    return "due_this_week";
+  }
+
+  if (dueUtc >= todayUtc && dueUtc <= endOfThisMonth) {
+    return "due_this_month";
+  }
+
+  return "future";
+}
+
+/**
+ * Apply the column-header filter values (stored in the `Filters` state object)
+ * as a second filtering pass after stackable filters.
+ *
+ * Each filter value is a comma-separated string of selected values, e.g.
+ * "Closed,RiskAccepted". An empty string means "no filter applied".
+ */
+export function applyColumnFilters(
+  plans: DashboardActionPlan[],
+  filters: {
+    status: string;
+    priority: string;
+    audit: string;
+    owner: string;
+    due_bucket: string;
+    created_via: string;
+  },
+): DashboardActionPlan[] {
+  let result = plans;
+
+  if (filters.status) {
+    const values = new Set(filters.status.split(",").map((v) => v.trim()).filter(Boolean));
+    result = result.filter((p) => values.has(p.status));
+  }
+
+  if (filters.priority) {
+    const values = new Set(filters.priority.split(",").map((v) => v.trim()).filter(Boolean));
+    result = result.filter((p) => p.priority != null && values.has(p.priority));
+  }
+
+  if (filters.audit) {
+    const ids = new Set(filters.audit.split(",").map((v) => v.trim()).filter(Boolean));
+    result = result.filter((p) => p.finding?.audit != null && ids.has(p.finding.audit.id));
+  }
+
+  if (filters.owner) {
+    const ids = new Set(filters.owner.split(",").map((v) => v.trim()).filter(Boolean));
+    result = result.filter((p) => p.action_plan_owners.some((o) => ids.has(o.user.id)));
+  }
+
+  if (filters.due_bucket) {
+    const buckets = new Set(filters.due_bucket.split(",").map((v) => v.trim()).filter(Boolean));
+    result = result.filter((p) => buckets.has(getDueBucket(p)));
+  }
+
+  if (filters.created_via) {
+    const values = new Set(filters.created_via.split(",").map((v) => v.trim()).filter(Boolean));
+    result = result.filter((p) => values.has(p.created_via));
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+
 export type LegacyFiltersShape = {
   q: string;
   status: string;

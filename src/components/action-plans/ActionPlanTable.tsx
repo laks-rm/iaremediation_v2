@@ -6,7 +6,11 @@ import { formatAuditLogEntry } from "../../lib/audit-log/formatAuditLogEntry";
 import {
   AUDIT_TYPE_COLORS,
   AUDIT_TYPE_LABELS,
+  PRIORITY_COLORS,
+  STATUS_COLORS,
+  STATUS_LABELS,
 } from "../../lib/constants";
+import ColumnFilterPopover from "../dashboard/ColumnFilterPopover";
 import EmptyState from "../EmptyState";
 import { useToast } from "../Toast";
 import ActionPlanSummary from "./ActionPlanSummary";
@@ -31,7 +35,8 @@ type DueBucket =
   | "due_this_month"
   | "future"
   | "no_date";
-type SortableColumn = "created_via" | "audit" | "owner" | "status" | "priority" | "due_bucket" | "evidence";
+type FilterColumn = "created_via" | "audit" | "owner" | "status" | "priority" | "due_bucket";
+type SortableColumn = FilterColumn | "evidence";
 export type SortBy = "title" | "audit" | "owner" | "status" | "priority" | "due_date" | "evidence_count";
 
 export type DashboardUser = {
@@ -236,6 +241,7 @@ export type ActionPlanTableProps = {
   user: DashboardUser | null;
   userOptions: UserOption[];
   onFilterChange: <K extends keyof Filters>(key: K, value: Filters[K]) => void;
+  onFiltersChange: (filters: Filters | ((current: Filters) => Filters)) => void;
   onGroupByAuditChange: (groupByAudit: boolean) => void;
   onSortChange: (sortBy: SortBy) => void;
   onExport: () => void;
@@ -260,6 +266,31 @@ export type ActionPlanTableProps = {
 const PAGE_SIZE = 50;
 const DASHBOARD_TABLE_COLUMNS = "2.1fr 1.3fr 1.4fr 1fr 0.8fr 1fr 0.6fr";
 const CLOSED_STATUSES: Status[] = ["Closed", "Dropped", "RiskAccepted"];
+const STATUS_ORDER: Status[] = [
+  "NotStarted",
+  "InProgress",
+  "PendingValidation",
+  "RiskAccepted",
+  "Dropped",
+  "Closed",
+];
+const PRIORITY_ORDER: Priority[] = ["High", "Moderate", "Low"];
+const CREATED_VIA_ORDER: CreatedVia[] = ["Manual", "AIIngestion", "Migration", "Standalone"];
+const DUE_BUCKET_OPTIONS: { key: DueBucket; label: string }[] = [
+  { key: "overdue_gt14", label: "Overdue >14 days" },
+  { key: "overdue_1to14", label: "Overdue 1-14 days" },
+  { key: "due_today", label: "Due today" },
+  { key: "due_this_week", label: "Due this week" },
+  { key: "due_this_month", label: "Due this month" },
+  { key: "future", label: "Future" },
+  { key: "no_date", label: "No date set" },
+];
+const CREATED_VIA_LABELS: Record<CreatedVia, string> = {
+  Manual: "Manual",
+  AIIngestion: "AI Ingestion",
+  Migration: "Migration",
+  Standalone: "Standalone",
+};
 const SORT_BY_COLUMN: Record<SortableColumn, SortBy> = {
   created_via: "title",
   audit: "audit",
@@ -407,6 +438,44 @@ function canEditActionPlan(user: DashboardUser | null, actionPlan: DashboardActi
   return actionPlan.action_plan_owners.some((owner) => owner.user.id === user.id);
 }
 
+function splitFilterValues(value: string) {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function joinFilterValues(values: string[]) {
+  return [...new Set(values)].join(",");
+}
+
+function toggleDraftValue(values: string[], value: string, checked: boolean) {
+  if (checked) {
+    return values.includes(value) ? values : [...values, value];
+  }
+
+  return values.filter((item) => item !== value);
+}
+
+function formatSelectedValues(values: string[], lookup: Map<string, string>, fallback?: (value: string) => string) {
+  return values.map((value) => lookup.get(value) ?? fallback?.(value) ?? value).join(", ");
+}
+
+function getAvatarInitials(name: string) {
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
+}
+
+function getAvatarTone(name: string) {
+  const tones = ["blue", "amber", "green", "purple", "slate"];
+  const total = [...name].reduce((sum, character) => sum + character.charCodeAt(0), 0);
+  return tones[total % tones.length];
+}
+
 function EditableField({
   label,
   value,
@@ -541,6 +610,7 @@ export default function ActionPlanTable({
   user,
   userOptions,
   onFilterChange,
+  onFiltersChange,
   onGroupByAuditChange,
   onSortChange,
   onExport,
@@ -815,6 +885,9 @@ export default function ActionPlanTable({
                 sortBy={sortBy}
                 sortDir={sortDir}
                 rowRefs={rowRefs}
+                filters={filters}
+                facets={facets}
+                setFilter={setFilter}
               />
             ))}
           </div>
@@ -829,6 +902,9 @@ export default function ActionPlanTable({
             setSelectedId={setSelectedId}
             sortBy={sortBy}
             sortDir={sortDir}
+            filters={filters}
+            facets={facets}
+            setFilter={setFilter}
           />
         ) : null}
       </section>
@@ -902,6 +978,9 @@ function ActionPlanRows({
   sortBy,
   sortDir,
   rowRefs,
+  filters,
+  facets,
+  setFilter,
 }: {
   actionPlans: DashboardActionPlan[];
   selectedId: string | null;
@@ -910,7 +989,28 @@ function ActionPlanRows({
   sortBy: SortBy | null;
   sortDir: "asc" | "desc" | null;
   rowRefs: MutableRefObject<Map<string, HTMLElement>>;
+  filters: Filters;
+  facets: DashboardFacets;
+  setFilter: <K extends keyof Filters>(key: K, value: Filters[K]) => void;
 }) {
+  const [openFilter, setOpenFilter] = useState<FilterColumn | null>(null);
+  const [draftValues, setDraftValues] = useState<string[]>([]);
+  const [auditSearch, setAuditSearch] = useState("");
+  const [ownerSearch, setOwnerSearch] = useState("");
+  const createdViaHeaderRef = useRef<HTMLButtonElement | null>(null);
+  const auditHeaderRef = useRef<HTMLButtonElement | null>(null);
+  const ownerHeaderRef = useRef<HTMLButtonElement | null>(null);
+  const statusHeaderRef = useRef<HTMLButtonElement | null>(null);
+  const priorityHeaderRef = useRef<HTMLButtonElement | null>(null);
+  const dueHeaderRef = useRef<HTMLButtonElement | null>(null);
+  const headerRefs: Record<FilterColumn, typeof createdViaHeaderRef> = {
+    created_via: createdViaHeaderRef,
+    audit: auditHeaderRef,
+    owner: ownerHeaderRef,
+    status: statusHeaderRef,
+    priority: priorityHeaderRef,
+    due_bucket: dueHeaderRef,
+  };
   const filterLabels: Record<SortableColumn, string> = {
     created_via: "Action Plan",
     audit: "Audit",
@@ -920,16 +1020,63 @@ function ActionPlanRows({
     due_bucket: "Due",
     evidence: "Evidence",
   };
+  const selectedCounts: Record<FilterColumn, number> = {
+    created_via: splitFilterValues(filters.created_via).length,
+    audit: splitFilterValues(filters.audit).length,
+    owner: splitFilterValues(filters.owner).length,
+    status: splitFilterValues(filters.status).length,
+    priority: splitFilterValues(filters.priority).length,
+    due_bucket: splitFilterValues(filters.due_bucket).length,
+  };
+  const filteredAudits = facets.audit.filter((audit) =>
+    audit.name.toLowerCase().includes(auditSearch.trim().toLowerCase()),
+  );
+  const filteredOwners = facets.owner.filter((owner) =>
+    owner.name.toLowerCase().includes(ownerSearch.trim().toLowerCase()),
+  );
+
+  function openColumnFilter(column: FilterColumn) {
+    setDraftValues(splitFilterValues(filters[column]));
+    setOpenFilter(column);
+    if (column === "audit") {
+      setAuditSearch("");
+    }
+    if (column === "owner") {
+      setOwnerSearch("");
+    }
+  }
+
+  function applyOpenFilter() {
+    if (!openFilter) {
+      return;
+    }
+
+    setFilter(openFilter, joinFilterValues(draftValues));
+    setOpenFilter(null);
+  }
+
+  function clearOpenFilter() {
+    if (!openFilter) {
+      return;
+    }
+
+    setFilter(openFilter, "");
+    setOpenFilter(null);
+  }
 
   function renderHeaderButton(column: SortableColumn) {
     const columnSortBy = SORT_BY_COLUMN[column];
     const isSorted = sortBy === columnSortBy;
+    const isFilterable = column !== "evidence";
+    const filterCount = isFilterable ? selectedCounts[column as FilterColumn] : 0;
+    const hasActiveFilter = filterCount > 0;
     const chevron = isSorted ? (sortDir === "asc" ? "↑" : "↓") : "↓";
-    const className = ["dashboard-column-filter", isSorted ? "dashboard-column-filter--sorted" : ""]
-      .filter(Boolean)
-      .join(" ");
-    const tooltipText =
-      column === "evidence" ? "Number of evidence files uploaded for this action plan" : undefined;
+    const className = [
+      "dashboard-column-filter",
+      hasActiveFilter ? "dashboard-column-filter--active" : "",
+      isSorted ? "dashboard-column-filter--sorted" : "",
+    ].filter(Boolean).join(" ");
+    const tooltipText = column === "evidence" ? "Number of evidence files uploaded for this action plan" : undefined;
 
     return (
       <span className={className}>
@@ -938,19 +1085,166 @@ function ActionPlanRows({
           onClick={() => cycleSort(columnSortBy)}
           title={tooltipText}
           type="button"
-          style={{ alignItems: "center", display: "flex", justifyContent: "space-between", width: "100%" }}
         >
           <span>{filterLabels[column]}</span>
-          <em
-            aria-hidden="true"
-            className={
-              isSorted ? "dashboard-column-filter__icon dashboard-column-filter__icon--sorted" : "dashboard-column-filter__icon"
-            }
-          >
-            {chevron}
-          </em>
+          {!isFilterable ? (
+            <em
+              aria-hidden="true"
+              className={isSorted ? "dashboard-column-filter__icon dashboard-column-filter__icon--sorted" : "dashboard-column-filter__icon"}
+            >
+              {chevron}
+            </em>
+          ) : null}
         </button>
+        {isFilterable ? (
+          <button
+            aria-label={`Filter ${filterLabels[column]}`}
+            className="dashboard-column-filter__trigger"
+            onClick={() => openColumnFilter(column as FilterColumn)}
+            ref={headerRefs[column as FilterColumn]}
+            type="button"
+          >
+            <em
+              aria-hidden="true"
+              className={isSorted ? "dashboard-column-filter__icon dashboard-column-filter__icon--sorted" : "dashboard-column-filter__icon"}
+            >
+              {chevron}
+            </em>
+          </button>
+        ) : null}
+        {hasActiveFilter ? <strong>{filterCount}</strong> : null}
       </span>
+    );
+  }
+
+  function renderOption({
+    value,
+    label,
+    count,
+    badgeClassName,
+    avatar,
+  }: {
+    value: string;
+    label: string;
+    count: number;
+    badgeClassName?: string;
+    avatar?: string;
+  }) {
+    const checked = draftValues.includes(value);
+
+    return (
+      <label className="column-filter-option" key={value}>
+        <input
+          checked={checked}
+          onChange={(event) =>
+            setDraftValues((current) => toggleDraftValue(current, value, event.target.checked))
+          }
+          type="checkbox"
+        />
+        {avatar ? (
+          <span className={`column-filter-avatar column-filter-avatar--${getAvatarTone(label)}`}>
+            {avatar}
+          </span>
+        ) : null}
+        <span className={badgeClassName ?? "column-filter-option__label"}>{label}</span>
+        <em>{count}</em>
+      </label>
+    );
+  }
+
+  function renderPopoverContents() {
+    if (!openFilter) {
+      return null;
+    }
+
+    return (
+      <>
+        <div className="column-filter-popover__body">
+          {openFilter === "status"
+            ? STATUS_ORDER.map((status) =>
+                renderOption({
+                  value: status,
+                  label: STATUS_LABELS[status],
+                  count: facets.status[status] ?? 0,
+                  badgeClassName: `column-filter-chip ${STATUS_COLORS[status].bg} ${STATUS_COLORS[status].text}`,
+                }),
+              )
+            : null}
+          {openFilter === "priority"
+            ? PRIORITY_ORDER.map((priority) =>
+                renderOption({
+                  value: priority,
+                  label: priority,
+                  count: facets.priority[priority] ?? 0,
+                  badgeClassName: `column-filter-chip ${PRIORITY_COLORS[priority].bg} ${PRIORITY_COLORS[priority].text}`,
+                }),
+              )
+            : null}
+          {openFilter === "audit" ? (
+            <>
+              <input
+                aria-label="Search audits"
+                className="column-filter-search"
+                onChange={(event) => setAuditSearch(event.target.value)}
+                placeholder="Search audits..."
+                value={auditSearch}
+              />
+              {filteredAudits.map((audit) =>
+                renderOption({
+                  value: audit.id,
+                  label: audit.name,
+                  count: audit.count,
+                }),
+              )}
+            </>
+          ) : null}
+          {openFilter === "owner" ? (
+            <>
+              <input
+                aria-label="Search owners"
+                className="column-filter-search"
+                onChange={(event) => setOwnerSearch(event.target.value)}
+                placeholder="Search owners..."
+                value={ownerSearch}
+              />
+              {filteredOwners.map((owner) =>
+                renderOption({
+                  value: owner.id,
+                  label: owner.name,
+                  count: owner.count,
+                  avatar: getAvatarInitials(owner.name),
+                }),
+              )}
+            </>
+          ) : null}
+          {openFilter === "due_bucket"
+            ? DUE_BUCKET_OPTIONS.map((bucket) =>
+                renderOption({
+                  value: bucket.key,
+                  label: bucket.label,
+                  count: facets.due_bucket[bucket.key] ?? 0,
+                }),
+              )
+            : null}
+          {openFilter === "created_via"
+            ? CREATED_VIA_ORDER.map((createdVia) =>
+                renderOption({
+                  value: createdVia,
+                  label: CREATED_VIA_LABELS[createdVia],
+                  count: facets.created_via[createdVia] ?? 0,
+                }),
+              )
+            : null}
+        </div>
+        <div className="column-filter-popover__footer">
+          <button className="column-filter-clear" onClick={clearOpenFilter} type="button">
+            Clear
+          </button>
+          <button className="button button--primary" onClick={applyOpenFilter} type="button">
+            Apply
+          </button>
+        </div>
+      </>
     );
   }
 
@@ -965,6 +1259,13 @@ function ActionPlanRows({
         {renderHeaderButton("due_bucket")}
         {renderHeaderButton("evidence")}
       </div>
+      <ColumnFilterPopover
+        anchorRef={openFilter ? headerRefs[openFilter] : createdViaHeaderRef}
+        isOpen={openFilter !== null}
+        onClose={() => setOpenFilter(null)}
+      >
+        {renderPopoverContents()}
+      </ColumnFilterPopover>
       {actionPlans.map((actionPlan) => {
         const isSelected = selectedId === actionPlan.id;
         return (
