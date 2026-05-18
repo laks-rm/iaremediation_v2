@@ -10,4 +10,8 @@ tsconfig.tsbuildinfo
 .DS_Store
 *.code-workspace
 scripts/data/
+scripts/backups/
+scripts/backup_prod_data.ts
+scripts/import_appsheet_data.ts
+.vscode/
 next-env.d.ts
