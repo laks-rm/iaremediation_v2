@@ -10,6 +10,7 @@ type WriteAuditLogInput = {
   beforeJson?: Prisma.InputJsonValue | null;
   afterJson?: Prisma.InputJsonValue | null;
   ipAddress?: string | null;
+  userAgent?: string | null;
 };
 
 export async function writeAuditLog({
@@ -20,6 +21,7 @@ export async function writeAuditLog({
   beforeJson,
   afterJson,
   ipAddress,
+  userAgent,
 }: WriteAuditLogInput) {
   return prisma.audit_log.create({
     data: {
@@ -36,6 +38,7 @@ export async function writeAuditLog({
       before_json: beforeJson ?? undefined,
       after_json: afterJson ?? undefined,
       ip_address: ipAddress ?? null,
+      user_agent: userAgent ?? null,
     },
   });
 }

@@ -365,6 +365,31 @@ export function getAuditLogChangeSummary(entry: AuditLogLike) {
   }
 
   if (entry.action === "Create") {
+    const reportType = getJsonString(entry.after_json, "report_type");
+    if (reportType) {
+      const reportName = getJsonString(entry.after_json, "report_name") ?? reportType;
+      const fmt = (getJsonString(entry.after_json, "format") ?? "").toUpperCase();
+      const period = getJsonString(entry.after_json, "period_label");
+
+        const paramsJson = isJsonRecord(entry.after_json) ? entry.after_json.parameters : null;
+      const entityCode = getJsonString(paramsJson, "entity");
+      const auditName = getJsonString(paramsJson, "audit_name");
+      const department = getJsonString(paramsJson, "department");
+      let qualifier = "";
+      if (entityCode) {
+        qualifier = ` for ${entityCode}`;
+      } else if (auditName) {
+        qualifier = `: ${auditName}`;
+      } else if (department) {
+        qualifier = ` filtered by ${department}`;
+      }
+
+      return {
+        title: `Downloaded ${reportName}${qualifier} (${fmt})${period ? ` — ${period}` : ""}`,
+        detail: getJsonString(entry.after_json, "filename"),
+      };
+    }
+
     return {
       title: `Created via ${getJsonString(entry.after_json, "created_via") ?? "system"}`,
       detail: getJsonString(entry.after_json, "title") ?? getJsonString(entry.after_json, "description"),

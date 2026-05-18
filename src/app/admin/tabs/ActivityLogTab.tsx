@@ -116,7 +116,8 @@ function avatarColor(name: string) {
   return { background: colors[index], color: textColors[index] };
 }
 
-function actionTone(action: string) {
+function actionTone(action: string, entityType?: string) {
+  if (entityType === "Report") return "blue";
   if (action === "Create" || action === "StatusChange") return "blue";
   if (action === "Update") return "amber";
   if (action === "Delete" || action === "LoginFailed" || action === "AccountLocked") return "red";
@@ -385,8 +386,8 @@ export default function ActivityLogTab() {
                 </span>
               </span>
               <span>
-                <mark className={`activity-action-chip activity-action-chip--${actionTone(entry.action)}`}>
-                  {entry.action}
+                <mark className={`activity-action-chip activity-action-chip--${actionTone(entry.action, entry.entity_type)}`}>
+                  {entry.entity_type === "Report" ? "Report" : entry.action}
                 </mark>
               </span>
               <span className="activity-log-entity">
