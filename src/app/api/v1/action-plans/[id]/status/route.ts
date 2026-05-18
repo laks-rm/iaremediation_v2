@@ -78,6 +78,17 @@ export async function POST(request: NextRequest, context: RouteContext) {
       ipAddress: getClientIp(request),
     });
 
+    // Propagate status and closed_at to mirrors if this is a primary plan
+    if (before?.linked_primary_id === null || before?.linked_primary_id === undefined) {
+      await prisma.action_plans.updateMany({
+        where: { linked_primary_id: id, is_deleted: false },
+        data: {
+          status: updated.status,
+          closed_at: updated.closed_at,
+        },
+      });
+    }
+
     return NextResponse.json({ action_plan: updated });
   } catch (error) {
     if (error instanceof AuthError) {

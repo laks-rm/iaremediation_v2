@@ -228,6 +228,7 @@ model action_plans {
   reschedule_count                Int                               @default(0)
   closure_remarks                 String?                           @db.Text
   closed_at                       DateTime?
+  linked_primary_id               String?                           @db.Uuid
   is_deleted                      Boolean                           @default(false)
   created_via                     CreatedVia
   created_by_id                   String                            @db.Uuid
@@ -235,6 +236,8 @@ model action_plans {
   updated_at                      DateTime                          @updatedAt
   finding                         findings                          @relation(fields: [finding_id], references: [id])
   created_by                      users                             @relation("action_plans_created_by", fields: [created_by_id], references: [id])
+  linked_primary                  action_plans?                     @relation("LinkedMirrors", fields: [linked_primary_id], references: [id], onDelete: SetNull)
+  linked_mirrors                  action_plans[]                    @relation("LinkedMirrors")
   action_plan_entities            action_plan_entities[]
   action_plan_owners              action_plan_owners[]
   action_plan_follow_up_auditors  action_plan_follow_up_auditors[]
@@ -246,6 +249,7 @@ model action_plans {
 
   @@index([status])
   @@index([is_deleted])
+  @@index([linked_primary_id])
 }
 
 model action_plan_entities {

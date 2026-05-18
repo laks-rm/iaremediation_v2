@@ -157,6 +157,37 @@ const actionPlanInclude = {
       },
     },
   },
+  linked_primary: {
+    select: {
+      id: true,
+      display_id: true,
+    },
+  },
+  linked_mirrors: {
+    where: { is_deleted: false },
+    select: {
+      id: true,
+      display_id: true,
+      finding: {
+        select: {
+          audit: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      },
+      action_plan_entities: {
+        select: {
+          entity: {
+            select: {
+              code: true,
+            },
+          },
+        },
+      },
+    },
+  },
   _count: {
     select: {
       evidence: {
@@ -188,11 +219,16 @@ function getDaysOverdue(currentTargetDate: Date | null, today: Date) {
 
 async function getKpis(where: Prisma.action_plansWhereInput, today: Date) {
   const { start, end } = getQuarterRange(today);
-  const [totalOpen, overdue, closedThisQuarter, pendingValidation] =
+  // Exclude mirrors from KPI counts — mirrors are tracked under their primary
+  const noMirrorsWhere: Prisma.action_plansWhereInput = {
+    ...where,
+    linked_primary_id: null,
+  };
+  const [totalOpen, overdue, closedThisQuarter, pendingValidation, mirrorCount] =
     await Promise.all([
       prisma.action_plans.count({
         where: {
-          ...where,
+          ...noMirrorsWhere,
           status: {
             notIn: CLOSED_STATUSES,
           },
@@ -200,7 +236,7 @@ async function getKpis(where: Prisma.action_plansWhereInput, today: Date) {
       }),
       prisma.action_plans.count({
         where: {
-          ...where,
+          ...noMirrorsWhere,
           status: {
             notIn: CLOSED_STATUSES,
           },
@@ -211,7 +247,7 @@ async function getKpis(where: Prisma.action_plansWhereInput, today: Date) {
       }),
       prisma.action_plans.count({
         where: {
-          ...where,
+          ...noMirrorsWhere,
           status: "Closed",
           updated_at: {
             gte: start,
@@ -221,8 +257,15 @@ async function getKpis(where: Prisma.action_plansWhereInput, today: Date) {
       }),
       prisma.action_plans.count({
         where: {
-          ...where,
+          ...noMirrorsWhere,
           status: "PendingValidation",
+        },
+      }),
+      prisma.action_plans.count({
+        where: {
+          ...where,
+          linked_primary_id: { not: null },
+          status: { notIn: CLOSED_STATUSES },
         },
       }),
     ]);
@@ -232,6 +275,7 @@ async function getKpis(where: Prisma.action_plansWhereInput, today: Date) {
     overdue,
     closed_this_quarter: closedThisQuarter,
     pending_validation: pendingValidation,
+    open_mirror_count: mirrorCount,
   };
 }
 

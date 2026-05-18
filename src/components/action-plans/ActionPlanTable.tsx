@@ -120,6 +120,9 @@ export type DashboardActionPlan = {
   evidence_count: number;
   is_overdue: boolean;
   days_overdue: number;
+  linked_primary_id: string | null;
+  linked_primary?: { id: string; display_id: string } | null;
+  linked_mirrors?: { id: string; display_id: string; finding?: { audit?: { name?: string | null } | null } | null; action_plan_entities?: { entity: { code: string } }[] }[];
   finding: {
     id: string;
     title: string;
@@ -206,6 +209,7 @@ export type Filters = {
   assigned_to_me: boolean;
   sort_by: string;
   sort_dir: string;
+  linked_status: "all" | "primary_only" | "mirrors_only";
 };
 
 type AuditLogEntry = {
@@ -261,6 +265,8 @@ export type ActionPlanTableProps = {
   hasStackableFilters?: boolean;
   onClearStackableFilters?: () => void;
   stackableFiltersKey?: string;
+  /** Lookup function that searches the FULL unfiltered dataset from the parent page. */
+  findInFullDataset?: (id: string) => DashboardActionPlan | null;
 };
 
 const PAGE_SIZE = 50;
@@ -629,6 +635,7 @@ export default function ActionPlanTable({
   hasStackableFilters = false,
   onClearStackableFilters,
   stackableFiltersKey = "",
+  findInFullDataset,
 }: ActionPlanTableProps) {
   const toast = useToast();
   const refreshTimerRef = useRef<number | null>(null);
@@ -640,6 +647,20 @@ export default function ActionPlanTable({
   const [auditLogs, setAuditLogs] = useState<Record<string, AuditLogEntry[]>>({});
   const [revisionHistoryOpen, setRevisionHistoryOpen] = useState<Record<string, boolean>>({});
   const [visibleLimit, setVisibleLimit] = useState(PAGE_SIZE);
+  const [navigationTab, setNavigationTab] = useState<"details" | "people" | "evidence" | "activity" | null>(null);
+
+  function handleNavigateTo(id: string, tab?: "details" | "people" | "evidence" | "activity") {
+    // Try local filtered list first, then full dataset via parent lookup.
+    // This handles cross-filter navigation without any async fetch.
+    const found = actionPlans.find((ap) => ap.id === id) ?? findInFullDataset?.(id);
+    if (found) {
+      setSelectedId(id);
+      setNavigationTab(tab ?? null);
+      return;
+    }
+    // Last resort: plan is absent from all local data (should be rare).
+    window.open(`/action-plans?expand=${id}`, "_blank");
+  }
 
   function scheduleRefresh() {
     if (refreshTimerRef.current) {
@@ -674,18 +695,37 @@ export default function ActionPlanTable({
   }, [selectedId]);
 
   useEffect(() => {
-    if (selectedId && !actionPlans.some((ap) => ap.id === selectedId)) {
+    if (!selectedId) return;
+    // Never clear while the parent is still fetching data — the plan may arrive
+    // in the next render once loading completes (e.g. ?expand= on initial page load).
+    if (loading) return;
+    const inLocal = actionPlans.some((ap) => ap.id === selectedId);
+    if (inLocal) return;
+    // Only close the slide-over if the plan is absent from the full dataset too.
+    // This keeps it open when filters hide the plan but it still exists.
+    const inFull = Boolean(findInFullDataset?.(selectedId));
+    if (!inFull) {
       setSelectedId(null);
     }
-  }, [actionPlans, selectedId]);
+  }, [actionPlans, selectedId, findInFullDataset, loading]);
 
   const visibleActionPlans = useMemo(() => {
-    const selected = selectedId ? actionPlans.find((ap) => ap.id === selectedId) : null;
-    const paged = actionPlans.slice(0, visibleLimit);
+    const linkedStatus = filters.linked_status ?? "all";
+    const filtered = linkedStatus === "all"
+      ? actionPlans
+      : linkedStatus === "primary_only"
+        ? actionPlans.filter((ap) => !ap.linked_primary_id)
+        : actionPlans.filter((ap) => Boolean(ap.linked_primary_id));
+    // Pull the selected plan from the local list first, then fall back to the
+    // full dataset so cross-filter navigation keeps the slide-over populated.
+    const selected = selectedId
+      ? (actionPlans.find((ap) => ap.id === selectedId) ?? findInFullDataset?.(selectedId) ?? null)
+      : null;
+    const paged = filtered.slice(0, visibleLimit);
     const merged = new Map<string, DashboardActionPlan>();
     [...paged, ...(selected ? [selected] : [])].forEach((actionPlan) => merged.set(actionPlan.id, actionPlan));
     return [...merged.values()];
-  }, [actionPlans, selectedId, visibleLimit]);
+  }, [actionPlans, selectedId, visibleLimit, filters.linked_status, findInFullDataset]);
 
   const groupedActionPlans = useMemo(() => {
     const groups = new Map<string, DashboardActionPlan[]>();
@@ -825,6 +865,16 @@ export default function ActionPlanTable({
             Group by audit
           </label>
         ) : null}
+        <select
+          aria-label="Linked status filter"
+          style={{ fontSize: 13 }}
+          value={filters.linked_status ?? "all"}
+          onChange={(event) => setFilter("linked_status", event.target.value as Filters["linked_status"])}
+        >
+          <option value="all">All plans</option>
+          <option value="primary_only">Primary &amp; standalone only</option>
+          <option value="mirrors_only">Mirrors only</option>
+        </select>
         <button className="button" disabled={isExporting} onClick={onExport} type="button">
           Export
         </button>
@@ -921,21 +971,35 @@ export default function ActionPlanTable({
         </div>
       ) : null}
 
-      {selectedId && actionPlans.find((ap) => ap.id === selectedId) ? (
-        <ActionPlanSlideOverPanel
-          actionPlan={actionPlans.find((ap) => ap.id === selectedId)!}
-          user={user}
-          userOptions={userOptions}
-          auditLogOpen={auditLogOpenIds.has(selectedId)}
-          auditLogs={auditLogs[selectedId] ?? []}
-          onClose={() => setSelectedId(null)}
-          patchActionPlanLocal={patchActionPlanLocal}
-          addCommentLocal={addCommentLocal}
-          loadAuditLog={loadAuditLog}
-          forceReloadAuditLog={forceReloadAuditLog}
-          refreshActionPlans={onRefresh}
-        />
-      ) : null}
+      {(() => {
+        const selectedPlan = selectedId
+          ? (actionPlans.find((ap) => ap.id === selectedId) ?? findInFullDataset?.(selectedId) ?? null)
+          : null;
+        if (!selectedPlan) return null;
+        return (
+          // key={selectedId} forces a full remount on every plan switch so that
+          // the panel's internal useState (drafts, mirrorsExpanded, comment, etc.)
+          // is always freshly initialized from the new plan's props.  Without this,
+          // stale userEditedFields from the previous plan block draft resets, causing
+          // false "hasUnsavedChanges" positives and confusing visual state.
+          <ActionPlanSlideOverPanel
+            key={selectedId}
+            actionPlan={selectedPlan}
+            user={user}
+            userOptions={userOptions}
+            auditLogOpen={auditLogOpenIds.has(selectedId!)}
+            auditLogs={auditLogs[selectedId!] ?? []}
+            onClose={() => setSelectedId(null)}
+            patchActionPlanLocal={patchActionPlanLocal}
+            addCommentLocal={addCommentLocal}
+            loadAuditLog={loadAuditLog}
+            forceReloadAuditLog={forceReloadAuditLog}
+            refreshActionPlans={onRefresh}
+            onNavigateTo={handleNavigateTo}
+            requestedTab={navigationTab}
+          />
+        );
+      })()}
     </>
   );
 }
@@ -1268,9 +1332,14 @@ function ActionPlanRows({
       </ColumnFilterPopover>
       {actionPlans.map((actionPlan) => {
         const isSelected = selectedId === actionPlan.id;
+        const isMirror = Boolean(actionPlan.linked_primary_id);
         return (
           <button
-            className={`dashboard-row${isSelected ? " dashboard-row--selected" : ""}`}
+            className={[
+              "dashboard-row",
+              isSelected ? "dashboard-row--selected" : "",
+              isMirror ? "dashboard-row--mirror" : "",
+            ].filter(Boolean).join(" ")}
             key={actionPlan.id}
             onClick={() => setSelectedId(actionPlan.id)}
             ref={(element) => {

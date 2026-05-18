@@ -2,7 +2,7 @@
 
 import { getSession } from "next-auth/react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import AppLayout from "../../components/AppLayout";
 import ActionPlanFilters, {
@@ -98,6 +98,7 @@ function readActionPlanFilters(searchParams: URLSearchParams): Filters {
     assigned_to_me: searchParams.get("assigned_to_me") === "1",
     sort_by: searchParams.get("sort_by") ?? "",
     sort_dir: searchParams.get("sort_dir") ?? "",
+    linked_status: "all",
   };
 }
 
@@ -207,6 +208,9 @@ function ActionPlansPageContent() {
   const searchParams = useSearchParams();
   const showDashboardBackLink = searchParams.has("ids");
   const expandActionPlanId = searchParams.get("expand");
+  // Track the most-recently-requested expand ID so the table reacts to URL changes.
+  const [expandedId, setExpandedId] = useState<string | null>(expandActionPlanId);
+  const prevExpandRef = useRef(expandActionPlanId);
   const [user, setUser] = useState<DashboardUser | null>(null);
   const [data, setData] = useState<ActionPlanTableData>(emptyData);
   const [filters, setFilters] = useState<Filters>(() =>
@@ -279,6 +283,15 @@ function ActionPlansPageContent() {
     fetchActionPlans();
   }, [fetchActionPlans]);
 
+  // React to expand= URL changes (e.g. back/forward navigation).
+  useEffect(() => {
+    const nextExpand = searchParams.get("expand");
+    if (nextExpand && nextExpand !== prevExpandRef.current) {
+      prevExpandRef.current = nextExpand;
+      setExpandedId(nextExpand);
+    }
+  }, [searchParams]);
+
   useEffect(() => {
     const sp = new URLSearchParams(searchParams.toString());
     const nextFilters = readActionPlanFilters(sp);
@@ -327,6 +340,12 @@ function ActionPlansPageContent() {
       .then(setUserOptions)
       .catch(() => setUserOptions([]));
   }, [user?.role]);
+
+  /** Searches the full unfiltered dataset, enabling cross-filter slide-over navigation. */
+  const findActionPlanById = useCallback(
+    (id: string) => data.action_plans.find((ap) => ap.id === id) ?? null,
+    [data.action_plans],
+  );
 
   const clientFilteredPlans = useMemo(() => {
     const afterStackable = applyFilters(data.action_plans, stackableFilters);
@@ -516,7 +535,8 @@ function ActionPlansPageContent() {
           totalUnfiltered={data.total_unfiltered}
           user={user}
           userOptions={userOptions}
-          initialExpandedId={expandActionPlanId}
+          initialExpandedId={expandedId}
+          findInFullDataset={findActionPlanById}
         />
       </div>
     </AppLayout>

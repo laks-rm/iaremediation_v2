@@ -1,4 +1,4 @@
-import { Priority, Prisma } from "@prisma/client";
+import { ActionPlanStatus, Priority, Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -23,6 +23,8 @@ const updateSchema = z.object({
   closed_at: z.string().nullable().optional(),
   priority: z.enum(["High", "Moderate", "Low"]).nullable().optional(),
   entity_ids: z.array(z.string().uuid()).optional(),
+  link_to: z.string().uuid().optional(),
+  unlink: z.literal(true).optional(),
 });
 
 type RouteContext = {
@@ -30,6 +32,16 @@ type RouteContext = {
     id: string;
   }>;
 };
+
+async function propagateToMirrors(
+  primaryId: string,
+  fields: { status?: ActionPlanStatus; current_target_date?: Date | null; closed_at?: Date | null; closure_remarks?: string | null },
+) {
+  await prisma.action_plans.updateMany({
+    where: { linked_primary_id: primaryId, is_deleted: false },
+    data: fields,
+  });
+}
 
 export async function GET(_request: NextRequest, context: RouteContext) {
   try {
@@ -68,6 +80,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             entity_id: true,
           },
         },
+        linked_mirrors: {
+          where: { is_deleted: false },
+          select: { id: true, display_id: true },
+        },
       },
     });
 
@@ -80,6 +96,131 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid request" }, { status: 400 });
     }
+
+    // --- LINK OPERATION ---
+    if (parsed.data.link_to !== undefined) {
+      const primaryId = parsed.data.link_to;
+
+      if (primaryId === id) {
+        return NextResponse.json({ error: "Cannot link a plan to itself" }, { status: 400 });
+      }
+
+      if (existing.linked_mirrors.length > 0) {
+        return NextResponse.json(
+          { error: "This plan already has mirrors. Unlink its mirrors before linking it to a primary." },
+          { status: 400 },
+        );
+      }
+
+      if (existing.linked_primary_id === primaryId) {
+        return NextResponse.json({ error: "This plan is already linked to that primary" }, { status: 400 });
+      }
+
+      const primary = await prisma.action_plans.findFirst({
+        where: { id: primaryId, is_deleted: false },
+        select: {
+          id: true,
+          display_id: true,
+          linked_primary_id: true,
+          status: true,
+          current_target_date: true,
+          closed_at: true,
+          closure_remarks: true,
+        },
+      });
+
+      if (!primary) {
+        return NextResponse.json({ error: "Target action plan not found" }, { status: 404 });
+      }
+
+      if (primary.linked_primary_id !== null) {
+        return NextResponse.json(
+          { error: "Cannot link to a mirror plan — only link to a primary or standalone plan" },
+          { status: 400 },
+        );
+      }
+
+      const updated = await prisma.action_plans.update({
+        where: { id },
+        data: {
+          linked_primary_id: primaryId,
+          status: primary.status,
+          current_target_date: primary.current_target_date,
+          closed_at: primary.closed_at,
+          closure_remarks: primary.closure_remarks,
+        },
+      });
+
+      await writeAuditLog({
+        userId: currentUser.id,
+        action: "Update",
+        entityType: "ActionPlan",
+        entityId: id,
+        beforeJson: toAuditJson({ linked_primary_id: existing.linked_primary_id }),
+        afterJson: toAuditJson({ linked_primary_id: primaryId, linked_to_display_id: primary.display_id }),
+        ipAddress: getClientIp(request),
+      });
+
+      await writeAuditLog({
+        userId: currentUser.id,
+        action: "Update",
+        entityType: "ActionPlan",
+        entityId: primaryId,
+        beforeJson: toAuditJson({ change: "mirror_added" }),
+        afterJson: toAuditJson({ change: "mirror_added", mirror_display_id: existing.display_id }),
+        ipAddress: getClientIp(request),
+      });
+
+      const payload = await getActionPlanPayload(id);
+      return NextResponse.json({ ...payload, updated });
+    }
+
+    // --- UNLINK OPERATION ---
+    if (parsed.data.unlink === true) {
+      if (!existing.linked_primary_id) {
+        return NextResponse.json({ error: "This plan is not currently linked to a primary" }, { status: 400 });
+      }
+
+      const primaryDisplayId = await prisma.action_plans.findFirst({
+        where: { id: existing.linked_primary_id },
+        select: { display_id: true, id: true },
+      });
+
+      await prisma.action_plans.update({
+        where: { id },
+        data: { linked_primary_id: null },
+      });
+
+      await writeAuditLog({
+        userId: currentUser.id,
+        action: "Update",
+        entityType: "ActionPlan",
+        entityId: id,
+        beforeJson: toAuditJson({
+          linked_primary_id: existing.linked_primary_id,
+          linked_to_display_id: primaryDisplayId?.display_id,
+        }),
+        afterJson: toAuditJson({ linked_primary_id: null }),
+        ipAddress: getClientIp(request),
+      });
+
+      if (primaryDisplayId) {
+        await writeAuditLog({
+          userId: currentUser.id,
+          action: "Update",
+          entityType: "ActionPlan",
+          entityId: primaryDisplayId.id,
+          beforeJson: toAuditJson({ change: "mirror_removed" }),
+          afterJson: toAuditJson({ change: "mirror_removed", mirror_display_id: existing.display_id }),
+          ipAddress: getClientIp(request),
+        });
+      }
+
+      const payload = await getActionPlanPayload(id);
+      return NextResponse.json(payload);
+    }
+
+    // --- REGULAR UPDATE ---
 
     // Validate entity_ids if provided
     if (parsed.data.entity_ids !== undefined) {
@@ -200,6 +341,20 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               : toAuditJson(updated),
           ipAddress: getClientIp(request),
         });
+
+        // Propagate synced fields to mirrors if this is a primary plan
+        if (existing.linked_primary_id === null) {
+          const syncedChanged =
+            parsed.data.closure_remarks !== undefined ||
+            parsed.data.closed_at !== undefined;
+
+          if (syncedChanged) {
+            await propagateToMirrors(id, {
+              closure_remarks: updated.closure_remarks,
+              closed_at: updated.closed_at,
+            });
+          }
+        }
       }
     }
 
@@ -228,11 +383,24 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         display_id: true,
         description: true,
         status: true,
+        linked_primary_id: true,
+        linked_mirrors: {
+          where: { is_deleted: false },
+          select: { id: true },
+        },
       },
     });
 
     if (!existing) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    // If this is a primary with mirrors, unlink all mirrors first
+    if (existing.linked_primary_id === null && existing.linked_mirrors.length > 0) {
+      await prisma.action_plans.updateMany({
+        where: { linked_primary_id: id, is_deleted: false },
+        data: { linked_primary_id: null },
+      });
     }
 
     const updated = await prisma.action_plans.update({

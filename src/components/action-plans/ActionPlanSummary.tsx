@@ -32,6 +32,7 @@ export type ActionPlanSummaryData = {
   evidence_count?: number;
   evidence?: unknown[];
   department?: string | null;
+  linked_primary_id?: string | null;
   finding?: {
     title?: string | null;
     is_standalone?: boolean;
@@ -295,6 +296,7 @@ export default function ActionPlanSummary({
   const auditName = audit?.name ?? (isStandalone ? "Standalone / Ad-hoc" : null);
   const owner = actionPlan.action_plan_owners?.[0]?.user;
   const isClosed = CLOSED_STATUSES.includes(actionPlan.status);
+  const isMirror = Boolean(actionPlan.linked_primary_id);
   const dueMeta = getDueMeta(actionPlan);
   const priorityColors = actionPlan.priority ? PRIORITY_COLORS[actionPlan.priority] : null;
   const statusColors = STATUS_COLORS[actionPlan.status];
@@ -310,7 +312,7 @@ export default function ActionPlanSummary({
   const shouldShowTooltip = tooltipText.length > 0;
 
   return (
-    <div className={`action-plan-summary action-plan-summary--${variant}`}>
+    <div className={`action-plan-summary action-plan-summary--${variant}${isMirror ? " action-plan-summary--mirror" : ""}`}>
       <div className="action-plan-summary__cell action-plan-summary__primary">
         {variant === "header-card" ? <span className="action-plan-summary__label">Action Plan</span> : null}
         <div className="action-plan-summary__meta-row">
@@ -319,6 +321,14 @@ export default function ActionPlanSummary({
             className="action-plan-summary__urgency-dot"
             style={{ backgroundColor: dueMeta.dotColor }}
           />
+          {isMirror ? (
+            <span
+              className="action-plan-summary__mirror-icon"
+              title="Mirror plan — status and dates sync from primary"
+            >
+              🔗
+            </span>
+          ) : null}
           <code className="action-plan-summary__id" title={actionPlan.display_id}>
             {actionPlan.display_id}
           </code>

@@ -73,6 +73,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
       ipAddress: getClientIp(request),
     });
 
+    // Propagate current_target_date to mirrors if this is a primary plan
+    if (before?.linked_primary_id === null || before?.linked_primary_id === undefined) {
+      await prisma.action_plans.updateMany({
+        where: { linked_primary_id: id, is_deleted: false },
+        data: { current_target_date: newDate },
+      });
+    }
+
     return NextResponse.json({ action_plan: updated });
   } catch (error) {
     if (error instanceof AuthError) {

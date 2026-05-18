@@ -36,7 +36,9 @@
   },
   "devDependencies": {
     "@types/pg": "^8.20.0",
+    "date-fns-tz": "^3.2.0",
     "ts-node": "^10.9.2",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "xlsx": "^0.18.5"
   }
 }

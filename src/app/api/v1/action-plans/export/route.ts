@@ -38,6 +38,8 @@ const columns = [
   "Evidence Count",
   "Entities",
   "Follow-up Auditors",
+  "Linked To",
+  "Is Mirror",
 ];
 
 const actionPlanExportInclude = {
@@ -93,6 +95,11 @@ const actionPlanExportInclude = {
       assigned_at: "asc",
     },
   },
+  linked_primary: {
+    select: {
+      display_id: true,
+    },
+  },
   _count: {
     select: {
       evidence: {
@@ -145,6 +152,7 @@ function getPrimaryOwner(actionPlan: ActionPlanExportRecord) {
 
 function toExportRow(actionPlan: ActionPlanExportRecord) {
   const owner = getPrimaryOwner(actionPlan);
+  const isMirror = actionPlan.linked_primary_id !== null;
 
   return [
     actionPlan.display_id,
@@ -161,6 +169,8 @@ function toExportRow(actionPlan: ActionPlanExportRecord) {
     actionPlan._count.evidence,
     actionPlan.action_plan_entities.map(({ entity }) => entity.code).join(", "),
     actionPlan.action_plan_follow_up_auditors.map(({ user }) => user.name).join(", "),
+    actionPlan.linked_primary?.display_id ?? "",
+    isMirror ? "Yes" : "",
   ];
 }
 

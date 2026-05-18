@@ -172,6 +172,42 @@ export function getAuditLogChangeSummary(entry: AuditLogLike) {
   if (entry.action === "Update") {
     const change = getJsonString(entry.after_json, "change");
 
+    // Link/unlink events
+    if (change === "mirror_added") {
+      const mirrorDisplayId = getJsonString(entry.after_json, "mirror_display_id");
+      return {
+        title: `${mirrorDisplayId ?? "A plan"} was linked as a mirror of this plan`,
+        detail: null,
+      };
+    }
+
+    if (change === "mirror_removed") {
+      const mirrorDisplayId = getJsonString(entry.after_json, "mirror_display_id");
+      return {
+        title: `${mirrorDisplayId ?? "A plan"} was unlinked from this plan`,
+        detail: null,
+      };
+    }
+
+    const beforeLinkedId = getJsonString(entry.before_json, "linked_primary_id");
+    const afterLinkedId = getJsonString(entry.after_json, "linked_primary_id");
+
+    if (beforeLinkedId === null && afterLinkedId !== null && afterLinkedId !== undefined) {
+      const linkedDisplayId = getJsonString(entry.after_json, "linked_to_display_id");
+      return {
+        title: `Linked as mirror of ${linkedDisplayId ?? afterLinkedId}`,
+        detail: null,
+      };
+    }
+
+    if (beforeLinkedId !== null && beforeLinkedId !== undefined && afterLinkedId === null) {
+      const linkedDisplayId = getJsonString(entry.before_json, "linked_to_display_id");
+      return {
+        title: `Unlinked from ${linkedDisplayId ?? beforeLinkedId}`,
+        detail: null,
+      };
+    }
+
     if (change === "owner_assigned") {
       const ownerName = getJsonString(entry.after_json, "owner_name") ?? "Unknown user";
       return {

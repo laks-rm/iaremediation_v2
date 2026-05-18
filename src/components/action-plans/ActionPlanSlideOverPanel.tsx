@@ -179,7 +179,17 @@ function AuditTypeBadge({ auditType }: { auditType?: AuditType | null }) {
   );
 }
 
-function getAuditLogColor(action: string) {
+function getAuditLogColor(action: string, beforeJson?: unknown, afterJson?: unknown) {
+  if (action === "Update") {
+    const change = typeof afterJson === "object" && afterJson && "change" in afterJson
+      ? String((afterJson as Record<string, unknown>).change)
+      : null;
+    if (change === "mirror_added" || change === "mirror_removed") return "#7c3aed";
+
+    const hasLinkedKey = (obj: unknown) =>
+      typeof obj === "object" && obj !== null && "linked_primary_id" in obj;
+    if (hasLinkedKey(beforeJson) || hasLinkedKey(afterJson)) return "#7c3aed";
+  }
   if (action === "StatusChange") return "#2563eb";
   if (action.includes("owner") || action.includes("auditor")) return "#0d9488";
   if (action.includes("Entity") || action.includes("entity") || action.includes("Entities")) return "#14b8a6";
@@ -189,6 +199,8 @@ function getAuditLogColor(action: string) {
   if (action === "Create") return "#64748b";
   return "#999";
 }
+
+type TabName = "details" | "people" | "evidence" | "activity";
 
 type ActionPlanSlideOverPanelProps = {
   actionPlan: DashboardActionPlan;
@@ -202,6 +214,8 @@ type ActionPlanSlideOverPanelProps = {
   loadAuditLog: (actionPlan: DashboardActionPlan) => Promise<void>;
   forceReloadAuditLog: (actionPlan: DashboardActionPlan) => Promise<void>;
   refreshActionPlans: () => Promise<void>;
+  onNavigateTo?: (id: string, tab?: TabName) => void;
+  requestedTab?: TabName | null;
 };
 
 export default function ActionPlanSlideOverPanel({
@@ -216,6 +230,8 @@ export default function ActionPlanSlideOverPanel({
   loadAuditLog,
   forceReloadAuditLog,
   refreshActionPlans,
+  onNavigateTo,
+  requestedTab,
 }: ActionPlanSlideOverPanelProps) {
   const toast = useToast();
   const { openAssistant } = useAIAssistant();
@@ -229,7 +245,7 @@ export default function ActionPlanSlideOverPanel({
   const canManageAssignments = user?.role === "AuditTeam";
 
   // Tab state
-  const [activeTab, setActiveTab] = useState<"details" | "people" | "evidence" | "activity">("details");
+  const [activeTab, setActiveTab] = useState<TabName>("details");
 
   // Panel width state
   const [panelWidth, setPanelWidth] = useState(400);
@@ -299,6 +315,43 @@ export default function ActionPlanSlideOverPanel({
   // AI loading states
   const [isGeneratingEvidenceSuggestion, setIsGeneratingEvidenceSuggestion] = useState(false);
   const [isGeneratingClosureRemarks, setIsGeneratingClosureRemarks] = useState(false);
+
+  // Linking states
+  const [showLinkModal, setShowLinkModal] = useState(false);
+  const [showUnlinkDialog, setShowUnlinkDialog] = useState(false);
+  const [linkSearch, setLinkSearch] = useState("");
+  const [linkSearchResults, setLinkSearchResults] = useState<{
+    id: string;
+    display_id: string;
+    title: string | null;
+    description: string;
+    status: string;
+    finding: { audit?: { name?: string | null } | null } | null;
+    action_plan_entities: { entity: { code: string } }[];
+  }[]>([]);
+  const [linkSearchLoading, setLinkSearchLoading] = useState(false);
+  const [pendingLinkTarget, setPendingLinkTarget] = useState<{ id: string; display_id: string } | null>(null);
+  const [isLinking, setIsLinking] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+  const [mirrorsExpanded, setMirrorsExpanded] = useState(false);
+
+  const isMirror = Boolean(actionPlan.linked_primary_id);
+  const isPrimary = !isMirror && (actionPlan.linked_mirrors?.length ?? 0) > 0;
+  const canLink = user?.role === "AuditTeam";
+  const showLinkOption = canLink && !isMirror && !isPrimary;
+  const showUnlinkOption = canLink && isMirror;
+
+  function navigateToPrimary(tab?: TabName) {
+    const primaryId = actionPlan.linked_primary_id;
+    if (!primaryId) return;
+    if (onNavigateTo) {
+      onNavigateTo(primaryId, tab);
+    } else {
+      const url = `/action-plans?expand=${primaryId}`;
+      window.open(url, "_blank");
+    }
+  }
 
   // Track changed fields
   const changedFields = useMemo(() => {
@@ -440,6 +493,13 @@ export default function ActionPlanSlideOverPanel({
   useEffect(() => {
     setLocalAuditLogOpen(auditLogOpen);
   }, [auditLogOpen, actionPlan.id]);
+
+  // Respond to external tab navigation requests (e.g. "go to primary's Evidence tab")
+  useEffect(() => {
+    if (requestedTab) {
+      setActiveTab(requestedTab);
+    }
+  }, [requestedTab, actionPlan.id]);
 
   // Close on Escape key
   useEffect(() => {
@@ -698,6 +758,66 @@ export default function ActionPlanSlideOverPanel({
       await refreshActionPlans();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to delete action plan.");
+    }
+  }
+
+  async function searchLinkTargets(q: string) {
+    setLinkSearchLoading(true);
+    try {
+      const params = new URLSearchParams({ exclude_id: actionPlan.id });
+      if (q.trim()) params.set("q", q.trim());
+      const response = await fetch(`/api/v1/action-plans/search?${params}`);
+      const body = await readResponseBody(response);
+      if (response.ok && body && typeof body === "object" && "action_plans" in body) {
+        setLinkSearchResults((body as { action_plans: typeof linkSearchResults }).action_plans);
+      }
+    } catch {
+      // silently ignore
+    } finally {
+      setLinkSearchLoading(false);
+    }
+  }
+
+  async function handleLinkConfirm() {
+    if (!pendingLinkTarget) return;
+    setIsLinking(true);
+    try {
+      const response = await fetch(`/api/v1/action-plans/${actionPlan.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ link_to: pendingLinkTarget.id }),
+      });
+      const body = await readResponseBody(response);
+      if (!response.ok) {
+        throw new Error(getResponseError(body, "Unable to link action plan."));
+      }
+      toast.success(`Linked to ${pendingLinkTarget.display_id}`);
+      setPendingLinkTarget(null);
+      setShowLinkModal(false);
+      await refreshActionPlans();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to link action plan.");
+    } finally {
+      setIsLinking(false);
+    }
+  }
+
+  async function handleUnlinkConfirm() {
+    setShowUnlinkDialog(false);
+    try {
+      const response = await fetch(`/api/v1/action-plans/${actionPlan.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ unlink: true }),
+      });
+      const body = await readResponseBody(response);
+      if (!response.ok) {
+        throw new Error(getResponseError(body, "Unable to unlink action plan."));
+      }
+      toast.success("Action plan unlinked successfully");
+      await refreshActionPlans();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to unlink action plan.");
     }
   }
 
@@ -1315,6 +1435,29 @@ export default function ActionPlanSlideOverPanel({
         onConfirm={removeActionPlanEntity}
       />
 
+      <ConfirmDialog
+        cancelLabel="Cancel"
+        confirmLabel="Unlink"
+        isDangerous
+        isOpen={showUnlinkDialog}
+        message={`This plan will become standalone. Current status and dates will be preserved but will no longer sync from ${actionPlan.linked_primary?.display_id ?? "the primary"}.`}
+        title={`Unlink from ${actionPlan.linked_primary?.display_id ?? "primary"}?`}
+        onCancel={() => setShowUnlinkDialog(false)}
+        onConfirm={handleUnlinkConfirm}
+      />
+
+      {pendingLinkTarget ? (
+        <ConfirmDialog
+          cancelLabel="Cancel"
+          confirmLabel="Confirm"
+          isOpen={Boolean(pendingLinkTarget)}
+          message={`Status, target date, and closure will sync from the primary. This plan's owners, entities, evidence, and comments stay independent.`}
+          title={`Make this plan a mirror of ${pendingLinkTarget.display_id}?`}
+          onCancel={() => setPendingLinkTarget(null)}
+          onConfirm={handleLinkConfirm}
+        />
+      ) : null}
+
       <aside className="action-plan-slide-over" ref={panelRef} style={{ width: `${panelWidth}px` }}>
         {/* Resize handle */}
         <div
@@ -1380,8 +1523,85 @@ export default function ActionPlanSlideOverPanel({
               title="Copy link to this action plan"
               type="button"
             >
-              🔗
+              📋
             </button>
+
+            {/* More menu with link/unlink */}
+            {(showLinkOption || showUnlinkOption) ? (
+              <div ref={moreMenuRef} style={{ position: "relative" }}>
+                <button
+                  className="slide-over-icon-button"
+                  onClick={() => setShowMoreMenu((v) => !v)}
+                  title="More options"
+                  type="button"
+                >
+                  ⋯
+                </button>
+                {showMoreMenu ? (
+                  <div
+                    style={{
+                      position: "absolute",
+                      right: 0,
+                      top: "110%",
+                      background: "var(--surface)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 6,
+                      boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+                      minWidth: 200,
+                      zIndex: 200,
+                      overflow: "hidden",
+                    }}
+                  >
+                    {showLinkOption ? (
+                      <button
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          padding: "9px 14px",
+                          textAlign: "left",
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          fontSize: 13,
+                          color: "var(--text)",
+                        }}
+                        type="button"
+                        onClick={() => {
+                          setShowMoreMenu(false);
+                          setShowLinkModal(true);
+                          setLinkSearch("");
+                          searchLinkTargets("");
+                        }}
+                      >
+                        🔗 Link to existing action plan
+                      </button>
+                    ) : null}
+                    {showUnlinkOption ? (
+                      <button
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          padding: "9px 14px",
+                          textAlign: "left",
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          fontSize: 13,
+                          color: "var(--text)",
+                        }}
+                        type="button"
+                        onClick={() => {
+                          setShowMoreMenu(false);
+                          setShowUnlinkDialog(true);
+                        }}
+                      >
+                        🔗 Unlink from primary
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             {isAdmin ? (
               <button
@@ -1403,11 +1623,104 @@ export default function ActionPlanSlideOverPanel({
             </button>
           </div>
 
+          {/* Mirror badge */}
+          {isMirror ? (
+            <div
+              style={{
+                padding: "6px 10px",
+                background: "#f5f3ff",
+                border: "1px solid #c4b5fd",
+                borderRadius: 6,
+                margin: "4px 0 2px",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <button
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    padding: 0,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: "#7c3aed",
+                    textDecoration: "underline",
+                  }}
+                  type="button"
+                  onClick={() => navigateToPrimary("details")}
+                >
+                  🔗 Mirror of {actionPlan.linked_primary?.display_id ?? "primary plan"}
+                </button>
+              </div>
+              <p style={{ margin: "3px 0 0", fontSize: 12, color: "#6b7280", lineHeight: 1.4 }}>
+                Status, target date, and closure sync from the primary plan. Other fields are managed independently.
+              </p>
+            </div>
+          ) : null}
+
+          {/* Primary with mirrors indicator */}
+          {isPrimary ? (
+            <div
+              style={{
+                padding: "5px 10px",
+                background: "#f0fdf4",
+                border: "1px solid #bbf7d0",
+                borderRadius: 6,
+                margin: "4px 0 2px",
+              }}
+            >
+              <button
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: 0,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: "#15803d",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 5,
+                }}
+                type="button"
+                onClick={() => setMirrorsExpanded((v) => !v)}
+              >
+                🔗 {actionPlan.linked_mirrors?.length ?? 0} linked mirror{(actionPlan.linked_mirrors?.length ?? 0) !== 1 ? "s" : ""}
+                <span style={{ fontSize: 10 }}>{mirrorsExpanded ? "▲" : "▼"}</span>
+              </button>
+              {mirrorsExpanded ? (
+                <ul style={{ margin: "6px 0 0", padding: 0, listStyle: "none" }}>
+                  {(actionPlan.linked_mirrors ?? []).map((mirror) => (
+                    <li key={mirror.id} style={{ fontSize: 12, color: "#374151", padding: "2px 0" }}>
+                      <button
+                        style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#7c3aed", fontWeight: 600 }}
+                        type="button"
+                        onClick={() => {
+                          if (onNavigateTo) {
+                            onNavigateTo(mirror.id, "details");
+                          } else {
+                            window.open(`/action-plans?expand=${mirror.id}`, "_blank");
+                          }
+                        }}
+                      >
+                        {mirror.display_id}
+                      </button>
+                      {mirror.finding?.audit?.name ? ` · ${mirror.finding.audit.name}` : ""}
+                      {(mirror.action_plan_entities?.length ?? 0) > 0
+                        ? ` · ${mirror.action_plan_entities?.map((ae) => ae.entity.code).join(", ")}`
+                        : ""}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+
           {/* ROW 2: Status row */}
           <div className="slide-over-status-row">
             <select
               className="slide-over-status-dropdown"
-              disabled={!canEdit}
+              disabled={!canEdit || isMirror}
               value={draftStatus}
               onChange={(event) => {
                 setDraftStatus(event.target.value as Status);
@@ -1416,6 +1729,7 @@ export default function ActionPlanSlideOverPanel({
               style={{
                 borderColor: STATUS_ACCENTS[draftStatus],
                 color: STATUS_ACCENTS[draftStatus],
+                opacity: isMirror ? 0.6 : 1,
               }}
             >
               {STATUS_ORDER.map((status) => (
@@ -1438,14 +1752,26 @@ export default function ActionPlanSlideOverPanel({
                   </span>
                 ) : null}
 
-                <button
-                  className="button slide-over-reschedule-button"
-                  disabled={!canEdit}
-                  onClick={() => setRevisionOpen((current) => !current)}
-                  type="button"
-                >
-                  {revisionOpen ? "Cancel" : "Reschedule"}
-                </button>
+                {!isMirror ? (
+                  <button
+                    className="button slide-over-reschedule-button"
+                    disabled={!canEdit}
+                    onClick={() => setRevisionOpen((current) => !current)}
+                    type="button"
+                  >
+                    {revisionOpen ? "Cancel" : "Reschedule"}
+                  </button>
+                ) : (
+                  <button
+                    className="button slide-over-reschedule-button"
+                    style={{ opacity: 0.5 }}
+                    onClick={() => navigateToPrimary("details")}
+                    type="button"
+                    title="Managed on primary plan"
+                  >
+                    On primary →
+                  </button>
+                )}
               </>
             ) : null}
           </div>
@@ -1621,6 +1947,37 @@ export default function ActionPlanSlideOverPanel({
           {/* SECTION 5: Details Tab */}
           {activeTab === "details" ? (
             <div className="slide-over-tab-content">
+              {/* Mirror info banner */}
+              {isMirror ? (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 8,
+                    padding: "10px 12px",
+                    background: "#f5f3ff",
+                    border: "1px solid #c4b5fd",
+                    borderRadius: 6,
+                    marginBottom: 12,
+                    fontSize: 13,
+                    lineHeight: 1.4,
+                  }}
+                >
+                  <span>🔗</span>
+                  <span style={{ color: "#5b21b6" }}>
+                    This plan is linked to{" "}
+                    <button
+                      style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#7c3aed", fontWeight: 600, textDecoration: "underline" }}
+                      type="button"
+                      onClick={() => navigateToPrimary("details")}
+                    >
+                      {actionPlan.linked_primary?.display_id ?? "primary plan"}
+                    </button>
+                    . Status, target dates, and closure sync from the primary.
+                  </span>
+                </div>
+              ) : null}
+
               {/* 1. Title input */}
               <div className="detail-field">
                 <label>Title (optional)</label>
@@ -1721,6 +2078,14 @@ export default function ActionPlanSlideOverPanel({
                     </button>
                   ) : null}
                 </div>
+                {isMirror ? (
+                  <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--text3)" }}>
+                    Managed on primary plan ·{" "}
+                    <button style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#7c3aed", fontSize: 12 }} type="button" onClick={() => navigateToPrimary("details")}>
+                      View →
+                    </button>
+                  </p>
+                ) : null}
                 {revisionHistoryOpen && actionPlan.target_date_revisions.length > 0 ? (
                   <div className="revision-history">
                     {actionPlan.target_date_revisions.map((revision) => (
@@ -1748,17 +2113,27 @@ export default function ActionPlanSlideOverPanel({
                       max={getTodayInputValue()}
                       value={formatDateInputValue(draftClosedAt) || getTodayInputValue()}
                       onChange={(event) => {
+                        if (isMirror) return;
                         setDraftClosedAt(event.target.value || null);
                         setUserEditedFields((prev) => new Set(prev).add("closed_at"));
                       }}
-                      disabled={!canEdit}
+                      disabled={!canEdit || isMirror}
+                      style={{ opacity: isMirror ? 0.6 : 1 }}
                     />
+                    {isMirror ? (
+                      <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--text3)" }}>
+                        Managed on primary plan ·{" "}
+                        <button style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#7c3aed", fontSize: 12 }} type="button" onClick={() => navigateToPrimary("details")}>
+                          View →
+                        </button>
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="detail-field">
                     <label>
                       Closure remarks
-                      {canEditFinding ? (
+                      {canEditFinding && !isMirror ? (
                         <button
                           className="slide-over-ai-button slide-over-ai-button--inline"
                           onClick={generateClosureRemarksWithAI}
@@ -1772,13 +2147,22 @@ export default function ActionPlanSlideOverPanel({
                     <textarea
                       value={draftClosureRemarks}
                       onChange={(event) => {
+                        if (isMirror) return;
                         setDraftClosureRemarks(event.target.value);
                         setUserEditedFields((prev) => new Set(prev).add("closure_remarks"));
                       }}
-                      disabled={!canEdit}
+                      disabled={!canEdit || isMirror}
                       placeholder="Describe how this action plan was closed..."
-                      style={{ minHeight: "100px" }}
+                      style={{ minHeight: "100px", opacity: isMirror ? 0.6 : 1 }}
                     />
+                    {isMirror ? (
+                      <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--text3)" }}>
+                        Managed on primary plan ·{" "}
+                        <button style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#7c3aed", fontSize: 12 }} type="button" onClick={() => navigateToPrimary("details")}>
+                          View →
+                        </button>
+                      </p>
+                    ) : null}
                   </div>
                 </>
               ) : null}
@@ -2262,6 +2646,36 @@ export default function ActionPlanSlideOverPanel({
           {/* SECTION 7: Evidence Tab */}
           {activeTab === "evidence" ? (
             <div className="slide-over-tab-content">
+              {/* Mirror redirect: evidence lives on primary */}
+              {isMirror ? (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: "48px 24px",
+                    textAlign: "center",
+                    gap: 16,
+                  }}
+                >
+                  <span style={{ fontSize: 32 }}>📎</span>
+                  <p style={{ margin: 0, fontSize: 14, color: "var(--text2)", fontWeight: 500 }}>
+                    Evidence is tracked on the primary action plan.
+                  </p>
+                  <button
+                    className="button button--primary"
+                    type="button"
+                    onClick={() => navigateToPrimary("evidence")}
+                  >
+                    View evidence on {actionPlan.linked_primary?.display_id ?? "primary"} →
+                  </button>
+                </div>
+              ) : null}
+
+              {/* Non-mirror: show normal evidence content */}
+              {!isMirror ? (
+                <>
               {/* Required evidence display */}
               <div className="detail-field">
                 <label>Required evidence</label>
@@ -2561,12 +2975,36 @@ export default function ActionPlanSlideOverPanel({
               ) : (
                 <EmptyState title="No evidence uploaded yet" subtitle="Upload files to document this action plan." />
               )}
+                </>
+              ) : null}
             </div>
           ) : null}
 
           {/* SECTION 8: Activity Tab */}
           {activeTab === "activity" ? (
             <div className="slide-over-tab-content">
+              {/* Mirror: link to primary activity */}
+              {isMirror ? (
+                <div
+                  style={{
+                    padding: "8px 12px",
+                    background: "#f5f3ff",
+                    border: "1px solid #c4b5fd",
+                    borderRadius: 6,
+                    marginBottom: 12,
+                    fontSize: 13,
+                  }}
+                >
+                  <button
+                    style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#7c3aed", fontSize: 13 }}
+                    type="button"
+                    onClick={() => navigateToPrimary("activity")}
+                  >
+                    View full activity on {actionPlan.linked_primary?.display_id ?? "primary plan"} →
+                  </button>
+                </div>
+              ) : null}
+
               {/* Comments section */}
               <div className="detail-field">
                 <label>
@@ -2658,7 +3096,7 @@ export default function ActionPlanSlideOverPanel({
                   auditLogs.length > 0 ? (
                     <div className="audit-log-timeline">
                       {auditLogs.map((entry, index) => {
-                        const color = getAuditLogColor(entry.action);
+                        const color = getAuditLogColor(entry.action, entry.before_json, entry.after_json);
                         const formatted = formatAuditLogEntry(entry);
                         const lines = formatted.split("\n");
                         const title = lines[0];
@@ -2783,6 +3221,103 @@ export default function ActionPlanSlideOverPanel({
                     Download {previewEvidence.original_name}
                   </a>
                 </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Link search modal */}
+      {showLinkModal ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.4)",
+            zIndex: 300,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowLinkModal(false); }}
+        >
+          <div
+            style={{
+              background: "var(--surface)",
+              borderRadius: 10,
+              boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+              width: "min(560px, 94vw)",
+              maxHeight: "80vh",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+            }}
+          >
+            <div style={{ padding: "16px 20px 12px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <strong style={{ fontSize: 15 }}>Link to existing action plan</strong>
+              <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: "var(--text3)" }} type="button" onClick={() => setShowLinkModal(false)}>×</button>
+            </div>
+            <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--border)" }}>
+              <input
+                autoFocus
+                placeholder="Search by AP reference, description, or audit name..."
+                style={{ width: "100%", padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 6, fontSize: 13 }}
+                type="text"
+                value={linkSearch}
+                onChange={(e) => {
+                  setLinkSearch(e.target.value);
+                  searchLinkTargets(e.target.value);
+                }}
+              />
+            </div>
+            <div style={{ overflowY: "auto", flex: 1 }}>
+              {linkSearchLoading ? (
+                <p style={{ textAlign: "center", padding: "24px 20px", color: "var(--text3)", fontSize: 13 }}>Searching...</p>
+              ) : linkSearchResults.length === 0 ? (
+                <p style={{ textAlign: "center", padding: "24px 20px", color: "var(--text3)", fontSize: 13 }}>
+                  {linkSearch ? "No matching action plans found." : "Type to search for an action plan to link to."}
+                </p>
+              ) : (
+                <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+                  {linkSearchResults.map((result) => (
+                    <li key={result.id}>
+                      <button
+                        disabled={isLinking}
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          padding: "10px 20px",
+                          textAlign: "left",
+                          background: "none",
+                          border: "none",
+                          borderBottom: "1px solid var(--border)",
+                          cursor: "pointer",
+                        }}
+                        type="button"
+                        onClick={() => {
+                          setShowLinkModal(false);
+                          setPendingLinkTarget({ id: result.id, display_id: result.display_id });
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                          <code style={{ fontSize: 12, fontWeight: 700, color: "#7c3aed" }}>{result.display_id}</code>
+                          <span style={{ fontSize: 11, color: "var(--text3)", background: "var(--surface2)", borderRadius: 3, padding: "1px 5px" }}>{result.status}</span>
+                          {result.action_plan_entities.length > 0 ? (
+                            <span style={{ fontSize: 11, color: "var(--text3)" }}>
+                              {result.action_plan_entities.map((ae) => ae.entity.code).join(", ")}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div style={{ fontSize: 12, color: "var(--text2)", marginBottom: 2 }}>
+                          {(result.title ?? result.description).substring(0, 80)}{(result.title ?? result.description).length > 80 ? "…" : ""}
+                        </div>
+                        {result.finding?.audit?.name ? (
+                          <div style={{ fontSize: 11, color: "var(--text3)" }}>{result.finding.audit.name}</div>
+                        ) : null}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
           </div>
