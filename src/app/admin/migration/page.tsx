@@ -401,6 +401,7 @@ function SplitTool() {
   const [step, setStep] = useState<SplitStep>("select-ap");
   const [ap, setAp] = useState<ApResult | null>(null);
   const [mappings, setMappings] = useState<EntityMapping[]>([]);
+  const [primaryFinding, setPrimaryFinding] = useState<FindingResult | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; created_display_ids?: string[]; error?: string } | null>(null);
 
@@ -408,12 +409,14 @@ function SplitTool() {
     setStep("select-ap");
     setAp(null);
     setMappings([]);
+    setPrimaryFinding(null);
     setResult(null);
     setSubmitting(false);
   };
 
   const handleApSelect = (selected: ApResult) => {
     setAp(selected);
+    setPrimaryFinding(null);
     const initial: EntityMapping[] = selected.action_plan_entities.map((e, i) => ({
       entity_code: e.entity.code,
       entity_id: "",
@@ -466,7 +469,11 @@ function SplitTool() {
       const res = await fetch("/api/v1/admin/migration/split", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action_plan_id: ap.id, mirrors: mirrorsPayload }),
+        body: JSON.stringify({
+          action_plan_id: ap.id,
+          mirrors: mirrorsPayload,
+          primary_finding_id: primaryFinding?.id ?? null,
+        }),
       });
       const body = await res.json() as { ok?: boolean; created_display_ids?: string[]; error?: string };
       if (!res.ok) {
@@ -561,9 +568,17 @@ function SplitTool() {
                       </div>
                     </div>
                     <div className="migration-entity-right">
-                      {m.role === "primary" && (
-                        <div className="migration-hint" style={{ marginTop: 6 }}>
-                          Stays on <strong>{ap.finding?.title ?? "current finding"}</strong>
+                      {m.role === "primary" && primaryFinding === null && (
+                        <FindingSearchBox
+                          label="Re-home primary to a different finding (optional)"
+                          onSelect={(f) => setPrimaryFinding(f)}
+                        />
+                      )}
+                      {m.role === "primary" && primaryFinding !== null && (
+                        <div className="migration-selected-card migration-selected-card--target migration-selected-card--inline">
+                          <button className="migration-clear" onClick={() => setPrimaryFinding(null)} aria-label="Clear">×</button>
+                          <div className="migration-selected-desc" style={{ fontSize: 12 }}>{primaryFinding.title}</div>
+                          <div className="migration-selected-meta">{primaryFinding.audit_name ?? "—"}</div>
                         </div>
                       )}
                       {m.role === "mirror" && m.targetFinding === null && (
@@ -604,12 +619,15 @@ function SplitTool() {
             <div className="migration-step-body">
               <div className="migration-preview" style={{ marginBottom: 14 }}>
                 <div className="migration-preview-title">Split preview</div>
-                <div className="migration-preview-row">
+                <div className={`migration-preview-row${primaryFinding ? " migration-preview-row--highlight" : ""}`}>
                   <span style={{ fontWeight: 600, minWidth: 80 }}>Primary AP</span>
                   <span>
                     <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11 }}>{ap.display_id}</span>
-                    {" "}— entities: {mappings.filter((m) => m.role === "primary").map((m) => m.entity_code).join(", ")}
-                    {" "}(stays on {ap.finding?.title ?? "current finding"})
+                    {" "}— {mappings.filter((m) => m.role === "primary").map((m) => m.entity_code).join(", ")}
+                    {" "}
+                    {primaryFinding
+                      ? <>→ Re-homed to {primaryFinding.title} ({primaryFinding.audit_name ?? "—"})</>
+                      : <>→ Stays under current finding ({ap.finding?.title ?? "—"})</>}
                   </span>
                 </div>
                 {mirrorMappings.map((m) => (

@@ -14,6 +14,7 @@ const splitSchema = z.object({
       finding_id: z.string().uuid(),
     }),
   ).min(1),
+  primary_finding_id: z.string().uuid().nullable().optional(),
 });
 
 async function getUniqueDisplayId(year: number): Promise<string> {
@@ -38,7 +39,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
     }
 
-    const { action_plan_id, mirrors } = body.data;
+    const { action_plan_id, mirrors, primary_finding_id } = body.data;
 
     const ap = await prisma.action_plans.findFirst({
       where: { id: action_plan_id, is_deleted: false },
@@ -103,6 +104,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "One or more target findings not found" }, { status: 400 });
     }
 
+    if (primary_finding_id) {
+      const primaryFindingExists = await prisma.findings.findFirst({
+        where: { id: primary_finding_id, is_deleted: false },
+        select: { id: true },
+      });
+      if (!primaryFindingExists) {
+        return NextResponse.json({ error: "Primary target finding not found" }, { status: 400 });
+      }
+    }
+
     const entityByCode = new Map(
       ap.action_plan_entities.map((e) => [e.entity.code, e]),
     );
@@ -155,9 +166,13 @@ export async function POST(request: NextRequest) {
         },
       });
 
+      const primaryUpdate: { updated_at: Date; finding_id?: string } = { updated_at: new Date() };
+      if (primary_finding_id && primary_finding_id !== ap.finding_id) {
+        primaryUpdate.finding_id = primary_finding_id;
+      }
       await tx.action_plans.update({
         where: { id: ap.id },
-        data: { updated_at: new Date() },
+        data: primaryUpdate,
       });
 
       return created;
@@ -182,6 +197,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    const primaryRehomed = primary_finding_id && primary_finding_id !== ap.finding_id;
     await writeAuditLog({
       userId: currentUser.id,
       action: "Update",
@@ -189,11 +205,13 @@ export async function POST(request: NextRequest) {
       entityId: ap.id,
       beforeJson: {
         entity_count: ap.action_plan_entities.length,
+        finding_id: ap.finding_id,
       },
       afterJson: {
         entity_count: ap.action_plan_entities.length - mirrors.length,
         mirrors_created: createdMirrors.map((m) => m.display_id),
         migration_op: "split_primary",
+        ...(primaryRehomed ? { finding_id: primary_finding_id } : {}),
       },
       ipAddress,
     });
