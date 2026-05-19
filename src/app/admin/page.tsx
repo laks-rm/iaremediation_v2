@@ -75,6 +75,9 @@ function AdminPageContent() {
             </Link>
           ))}
         </nav>
+        <div style={{ padding: "8px 0 0" }}>
+          <Link className="admin-tab-link" href="/admin/migration">⚙ Migration Support</Link>
+        </div>
         {content}
       </div>
     </AppLayout>
